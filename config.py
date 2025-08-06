@@ -9,12 +9,12 @@ API_DOMAIN = "www.wnacg01.cc"
 
 # 登录配置
 LOGIN_CONFIG = {
-    "username": "2233198920",
-    "password": "zhaoliyu22",
+    "username": "",
+    "password": "",
 }
 
 # Cookie配置 - 可以手动填入，也可以留空让程序自动获取
-WNACG_COOKIE = "_ym_uid=175438600627215927; _ym_d=1754386006; _ym_isad=1; MPIC_bnS5=04d09JS1iO%2FfpcYN4IDCoi9q1n21%2Fedo3vc5PtwPbUdYCoQnXS6PCjl6EHJYbL6jcLGRAN%2Bc2ZI2ZSz8bhq4e1sOFfg; _ym_visorc=b"
+WNACG_COOKIE = ""
 
 # User-Agent配置
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
