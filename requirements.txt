@@ -1,0 +1,7 @@
+# 现有依赖
+aiohttp>=3.8.0
+beautifulsoup4>=4.11.0
+requests>=2.28.0
+
+# Playwright依赖
+playwright>=1.40.0
