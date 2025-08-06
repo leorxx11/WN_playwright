@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Python-based WNACG (Chinese manga site) scraper that extracts user shelf information and comic metadata, with automated download capabilities. The project consists of three main components:
+This is a Python-based WNACG (Chinese manga site) scraper that extracts user shelf information and comic metadata, with automated download capabilities. The project consists of four main components:
 
 - **Shelf scraper**: Extracts comic information from user's organized shelves/bookmarks
-- **Comic downloader**: Automated browser-based downloading with Playwright
+- **Comic downloader**: Automated browser-based downloading with Playwright for single comics
+- **Batch downloader**: Automated batch downloading from shelf JSON files with progress tracking
 - **Configuration management**: Handles authentication, API endpoints, and request parameters
 
 ## Architecture
@@ -15,13 +16,16 @@ This is a Python-based WNACG (Chinese manga site) scraper that extracts user she
 ### Core Files
 - `config.py`: Central configuration management with Cookie authentication, API domains, and request settings
 - `get_shelf_info.py`: Async shelf scraping with BeautifulSoup HTML parsing and aiohttp for HTTP requests
-- `download_comic.py`: Playwright-based automated comic downloading with SSL warning handling and retry logic
+- `comic_downloader.py`: Playwright-based automated comic downloading with SSL warning handling and retry logic
+- `batch_download.py`: Batch comic downloading from shelf JSON files with progress tracking and logging
 - `需求.md`: Chinese documentation explaining shelf extraction logic and browser automation requirements
 
 ### Key Components
 - **Authentication**: Cookie-based auth with automatic login fallback
 - **Web scraping**: Async HTTP client with BeautifulSoup for HTML parsing  
 - **Browser automation**: Playwright for downloading with SSL warning handling and retry mechanisms
+- **Batch processing**: Automated batch downloads with resume capability and progress tracking
+- **Logging system**: Comprehensive logging for both single and batch downloads with separate log files
 - **Data structures**: Dataclasses for Shelf, ComicInFavorite, and GetFavoriteResult
 - **File I/O**: JSON export to `search_results/` directory, ZIP downloads to `url/` directory
 
@@ -33,8 +37,11 @@ Since this is a simple Python project without package management files, run scri
 # Run shelf information extraction
 python get_shelf_info.py
 
-# Download comics (requires comic ID)
-python download_comic.py
+# Download single comic (requires comic ID)
+python comic_downloader.py
+
+# Batch download comics from shelf JSON
+python batch_download.py
 
 # Test configuration
 python config.py
@@ -73,8 +80,17 @@ Comic downloads are optimized with:
 - **No confirmations**: Downloads proceed automatically without user prompts
 - **Retry mechanism**: Failed downloads retry up to 3 times with 5-second delays
 - **SSL handling**: Automatically bypasses certificate warnings
+- **Logging system**: Comprehensive logging for both single downloads and batch processing
+- **Progress tracking**: Real-time progress display and detailed logging for batch downloads
+- **Resume capability**: Batch downloads can skip already downloaded comics
 
 Downloads are stored in the `url/` directory organized by comic title.
+
+### Logging
+- Single downloads: Logs saved to `logs/comic_download_{timestamp}.log`
+- Batch downloads: Logs saved to `logs/batch_download_{timestamp}.log`
+- Console output shows minimal progress information
+- Detailed information including errors and debug info are written to log files
 
 ### Dependencies
 Install required packages:

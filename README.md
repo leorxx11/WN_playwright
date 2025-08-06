@@ -5,8 +5,10 @@
 ## 功能特性
 
 - **书架信息提取**: 异步爬取用户书架中的漫画信息
-- **自动下载**: 基于 Playwright 的浏览器自动化下载
+- **单个下载**: 基于 Playwright 的浏览器自动化下载单部漫画
+- **批量下载**: 从书架JSON文件批量下载多部漫画，支持断点续传
 - **配置管理**: 支持 Cookie 认证和 API 配置
+- **日志系统**: 详细的日志记录，支持进度追踪和错误排查
 - **数据导出**: JSON 格式导出书架数据
 
 ## 项目结构
@@ -14,7 +16,8 @@
 ```
 ├── config.py              # 配置管理和认证设置
 ├── get_shelf_info.py      # 书架信息爬取脚本
-├── download_comic.py      # 漫画下载脚本
+├── comic_downloader.py    # 漫画下载脚本
+├── batch_download.py      # 批量下载脚本
 ├── requirements.txt       # 依赖包列表
 └── CLAUDE.md             # 项目开发指南
 ```
@@ -60,8 +63,14 @@ python get_shelf_info.py
 
 ### 下载漫画
 
+单个下载：
 ```bash
-python download_comic.py
+python comic_downloader.py
+```
+
+批量下载：
+```bash
+python batch_download.py
 ```
 
 下载的文件将保存到 `url/` 目录

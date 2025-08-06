@@ -35,6 +35,7 @@ Thumbs.db
 config_local.py
 
 # Logs
+logs/
 *.log
 
 # Temporary files
