@@ -96,6 +96,10 @@ async def get_shelves(session: aiohttp.ClientSession, cookie: str) -> List[Shelf
         if resp.status != 200:
             raise RuntimeError(f"Unexpected status {resp.status}: {text}")
     
+    # 检查是否需要登录
+    if "您沒有權限，需要登錄" in text or "需要登錄" in text:
+        raise ValueError("Cookie已过期或无效，需要重新登录获取有效的Cookie")
+    
     soup = BeautifulSoup(text, "html.parser")
     shelves = [parse_shelf(a) for a in soup.select('.nav_list > a')]
     return shelves
@@ -131,7 +135,15 @@ async def main(cookie: str, shelf_id: int = None):
         # 如果没有指定书架ID，先获取书架列表让用户选择
         if shelf_id is None:
             print("正在获取书架列表...")
-            shelves = await get_shelves(session, cookie)
+            try:
+                shelves = await get_shelves(session, cookie)
+            except ValueError as e:
+                if "Cookie已过期或无效" in str(e):
+                    print(f"错误: {e}")
+                    print("请运行 'python config.py' 重新生成cookie")
+                    return
+                else:
+                    raise
             
             print("\n可用的书架:")
             for i, shelf in enumerate(shelves):
@@ -185,7 +197,6 @@ async def main(cookie: str, shelf_id: int = None):
         print(f"书架信息已保存到文件: {filepath}")
         print(f"共获取到 {len(all_comics)} 本漫画")
         print("格式说明: 已保存为统一JSON格式，保存在search_results目录下")
-        print("可使用get_url.py自动扫描该目录并选择文件获取下载链接")
 
 if __name__ == "__main__":
     try:
@@ -195,4 +206,4 @@ if __name__ == "__main__":
         asyncio.run(main(ck))
     except ValueError as e:
         print(f"配置错误: {e}")
-        print("请检查config.py文件中的WNACG_COOKIE设置")
+        print("请运行 'python config.py' 生成有效的cookie")

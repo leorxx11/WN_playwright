@@ -4,11 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Python-based WNACG (Chinese manga site) scraper that extracts user shelf information and comic metadata, with automated download capabilities. The project consists of four main components:
+This is a Python-based WNACG (Chinese manga site) scraper that extracts user shelf information and comic metadata, with automated download capabilities. The project consists of five main components:
 
 - **Shelf scraper**: Extracts comic information from user's organized shelves/bookmarks
 - **Comic downloader**: Automated browser-based downloading with Playwright for single comics
 - **Batch downloader**: Automated batch downloading from shelf JSON files with progress tracking
+- **Author classifier**: Organizes and classifies comics by author information from CSV data
 - **Configuration management**: Handles authentication, API endpoints, and request parameters
 
 ## Architecture
@@ -18,7 +19,9 @@ This is a Python-based WNACG (Chinese manga site) scraper that extracts user she
 - `get_shelf_info.py`: Async shelf scraping with BeautifulSoup HTML parsing and aiohttp for HTTP requests
 - `comic_downloader.py`: Playwright-based automated comic downloading with SSL warning handling and retry logic
 - `batch_download.py`: Batch comic downloading from shelf JSON files with progress tracking and logging
+- `classify_by_author.py`: Author-based classification and organization of comic data from CSV files
 - `需求.md`: Chinese documentation explaining shelf extraction logic and browser automation requirements
+- `name.csv`: Author name data for classification purposes
 
 ### Key Components
 - **Authentication**: Cookie-based auth with automatic login fallback
@@ -42,6 +45,9 @@ python comic_downloader.py
 
 # Batch download comics from shelf JSON
 python batch_download.py
+
+# Classify comics by author from CSV data
+python classify_by_author.py
 
 # Test configuration
 python config.py

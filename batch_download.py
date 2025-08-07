@@ -8,12 +8,13 @@ import json
 import os
 import glob
 import logging
+import re
 from typing import List, Dict
 from datetime import datetime
 
 from playwright.async_api import async_playwright
 from comic_downloader import download_comic, login_with_cookies, DOWNLOAD_CONFIG
-from config import DIRECTORIES, LOGIN_CONFIG
+from config import DIRECTORIES, get_cookie, get_login_config
 
 
 def setup_logging() -> logging.Logger:
@@ -171,8 +172,10 @@ async def download_comics_from_json(json_file_path: str, logger, start_index: in
     """从JSON文件中批量下载漫画"""
     
     # 检查登录配置
-    if not LOGIN_CONFIG.get('username') or not LOGIN_CONFIG.get('password'):
-        error_msg = "请在config.py中配置LOGIN_CONFIG用户名和密码"
+    try:
+        username, password = get_login_config()
+    except ValueError as e:
+        error_msg = f"登录配置错误: {e}"
         print(f"❌ {error_msg}")
         logger.error(error_msg)
         return
@@ -245,14 +248,15 @@ async def download_comics_from_json(json_file_path: str, logger, start_index: in
                 manager.print_progress(comic_title, comic_id)
                 
                 try:
-                    # 检查是否已经下载过（简单检查）
+                    # 检查是否已经下载过（检查压缩包文件）
                     download_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIRECTORIES['downloads'])
                     safe_title = comic_title.replace('/', '_').replace('\\', '_').replace(':', '_')
-                    potential_dir = os.path.join(download_dir, f"{comic_id}_{safe_title}")
+                    safe_title = re.sub(r'[<>:"/\\|?*]', '_', safe_title)
+                    potential_zip = os.path.join(download_dir, f"{safe_title}.zip")
                     
-                    if os.path.exists(potential_dir):
+                    if os.path.exists(potential_zip):
                         print(f"⚠️  跳过已存在")
-                        logger.info(f"Skipping existing comic: [{comic_id}] {comic_title} at {potential_dir}")
+                        logger.info(f"Skipping existing comic: [{comic_id}] {comic_title} at {potential_zip}")
                         manager.successful_downloads.append(comic)
                         continue
                     

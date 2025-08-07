@@ -6,8 +6,6 @@ import asyncio
 import os
 import re
 import logging
-from typing import Optional
-from pathlib import Path
 
 from playwright.async_api import async_playwright, Page, BrowserContext
 from config import API_DOMAIN, LOGIN_CONFIG, DIRECTORIES, get_cookie
@@ -419,92 +417,11 @@ async def login_with_cookies(page: Page) -> bool:
         logger.error(f"使用Cookie登录失败: {e}")
         return await login_to_site(page)
 
-async def get_comic_title(page: Page, comic_id: int) -> str:
-    """获取漫画标题"""
-    url = f"https://{API_DOMAIN}/photos-index-aid-{comic_id}.html"
-    
-    await page.goto(url)
-    await page.wait_for_load_state('networkidle')
-    
-    # 解析标题
-    title_elem = page.locator('h2').first
-    title = await title_elem.text_content() if await title_elem.count() > 0 else f"Comic_{comic_id}"
-    
-    return title.strip()
-
-async def get_page_image_url(page: Page, page_url: str) -> Optional[str]:
-    """获取单个页面的图片URL"""
-    try:
-        await page.goto(page_url)
-        await page.wait_for_load_state('networkidle')
-        
-        # 查找图片元素
-        img_elem = page.locator('#picarea img').first
-        if await img_elem.count() == 0:
-            img_elem = page.locator('.pic_content img').first
-        
-        if await img_elem.count() > 0:
-            img_src = await img_elem.get_attribute('src') or await img_elem.get_attribute('data-src')
-            if img_src:
-                if not img_src.startswith('http'):
-                    img_src = f"https://{API_DOMAIN}{img_src}"
-                return img_src
-        
-        return None
-    except Exception as e:
-        logger = get_logger()
-        logger.error(f"获取页面图片URL失败 {page_url}: {e}")
-        return None
 
 
 
 
-async def debug_page_elements(page: Page):
-    """调试函数：打印页面上所有可能的下载相关元素"""
-    logger = get_logger()
-    try:
-        logger.info("=== 调试：页面元素分析 ===")
-        current_url = page.url
-        logger.info(f"当前页面URL: {current_url}")
-        
-        # 查找所有包含下载相关文字的元素
-        download_texts = ['下载', '下載', 'download', 'Download', '本地下载', '本地下載']
-        for text in download_texts:
-            elements = await page.locator(f'text={text}').all()
-            if elements:
-                logger.info(f"\n找到包含'{text}'的元素:")
-                for i, elem in enumerate(elements):
-                    try:
-                        tag_name = await elem.evaluate('el => el.tagName')
-                        text_content = await elem.text_content()
-                        href = await elem.get_attribute('href') if tag_name.lower() == 'a' else None
-                        class_attr = await elem.get_attribute('class')
-                        logger.info(f"  {i+1}. <{tag_name}> '{text_content}' href='{href}' class='{class_attr}'")
-                    except:
-                        continue
-        
-        # 查找所有链接
-        all_links = await page.locator('a').all()
-        download_related_links = []
-        for link in all_links:
-            try:
-                href = await link.get_attribute('href')
-                text = await link.text_content()
-                if href and ('download' in href.lower() or 'zip' in href.lower() or 'rar' in href.lower()):
-                    download_related_links.append((text, href))
-                elif text and any(keyword in text for keyword in ['下载', '下載', 'download']):
-                    download_related_links.append((text, href))
-            except:
-                continue
-        
-        if download_related_links:
-            logger.info(f"\n找到的下载相关链接:")
-            for i, (text, href) in enumerate(download_related_links):
-                logger.info(f"  {i+1}. '{text}' -> {href}")
-        
-        logger.info("=== 调试结束 ===\n")
-    except Exception as e:
-        logger.error(f"调试页面元素失败: {e}")
+
 
 async def handle_ssl_warning(page: Page) -> bool:
     """处理SSL证书警告页面"""
@@ -703,10 +620,11 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
         title = title.strip()
         logger.info(f"漫画标题: {title}")
         
-        # 创建下载目录
+        # 确保下载目录存在
+        os.makedirs(download_dir, exist_ok=True)
+        
+        # 生成安全的文件名
         safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)
-        comic_dir = os.path.join(download_dir, f"{comic_id}_{safe_title}")
-        os.makedirs(comic_dir, exist_ok=True)
         
         # 寻找下载按钮 - 简化选择器，减少误伤
         download_selectors = [
@@ -725,8 +643,6 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
             'text=下载'
         ]
         
-        # 调试：打印页面元素信息 (已禁用)
-        # await debug_page_elements(page)
         
         download_button = None
         for selector in download_selectors:
@@ -833,8 +749,6 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
                     logger.error("页面加载超时")
                     return False
         
-        # 调试：打印下载页面的元素信息 (已禁用)
-        # await debug_page_elements(page)
         
         # 在下载页面寻找实际的下载链接 - 基于截图更新选择器，简化避免误伤
         download_link_selectors = [
@@ -928,9 +842,9 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
             # 获取建议的文件名
             suggested_filename = download.suggested_filename
             if not suggested_filename:
-                suggested_filename = f"{comic_id}_{safe_title}.zip"
+                suggested_filename = f"{safe_title}.zip"
             
-            download_path = os.path.join(comic_dir, suggested_filename)
+            download_path = os.path.join(download_dir, suggested_filename)
             logger.info(f"正在下载文件: {suggested_filename}")
             
             # 保存下载的文件，并监听进度

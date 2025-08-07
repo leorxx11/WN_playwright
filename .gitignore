@@ -1,25 +1,62 @@
-# Search results directory
+# Project-specific directories
 search_results/
-
-# Downloaded comics directory  
 url/
+logs/
+class/
 
-# Python cache
+# Python cache and compiled files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.pyd
+*.pyo
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
 # Virtual environment
 venv/
 env/
 ENV/
+env.bak/
+venv.bak/
+.venv/
 
 # IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.spyderproject
+.spyproject
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment variables
+.env
+.env.local
+.env.*.local
 
 # OS generated files
 .DS_Store
@@ -29,15 +66,35 @@ ENV/
 .Trashes
 ehthumbs.db
 Thumbs.db
+desktop.ini
 
 # Credentials and sensitive data
 *.cookie
 config_local.py
+secrets.json
+.secrets/
 
-# Logs
-logs/
+# Logs and temporary files
 *.log
-
-# Temporary files
 *.tmp
 *.temp
+*.bak
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+cookie.json
