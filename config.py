@@ -32,6 +32,18 @@ DOWNLOAD_CONFIG = {
     "retry_delay": 5,  # 重试间隔(秒)
 }
 
+# 搜索配置
+REQUEST_CONFIG = {
+    "timeout": 30,  # 请求超时时间(秒)
+    "max_retries": 3,  # 最大重试次数
+    "max_pages": 20,  # 默认搜索最大页数
+}
+
+# 搜索匹配配置
+SEARCH_CONFIG = {
+    "min_similarity": 0.3,  # 最小匹配相似度
+}
+
 # 目录配置
 DIRECTORIES = {
     "search_results": "search_results",  # 书架信息存储目录
