@@ -6,15 +6,15 @@ import os
 import json
 import requests
 from datetime import datetime
+from dotenv import load_dotenv
+
+# 加载.env文件中的环境变量
+load_dotenv()
 
 # API域名配置
 API_DOMAIN = "www.wnacg01.cc"
 
-# 登录配置
-LOGIN_CONFIG = {
-    "username": "2233198920",
-    "password": "zhaoliyu22",
-}
+# 登录配置现在完全通过环境变量 WNACG_USERNAME 和 WNACG_PASSWORD 管理
 
 
 # Cookie现在自动管理，不需要手动配置
@@ -47,7 +47,7 @@ SEARCH_CONFIG = {
 # 目录配置
 DIRECTORIES = {
     "search_results": "search_results",  # 书架信息存储目录
-    "downloads": "url",  # 漫画下载目录
+    "downloads": "downloads",  # 漫画下载目录
 }
 
 # Cookie文件路径
@@ -114,12 +114,6 @@ def login_and_get_cookie():
     try:
         response = session.get(login_url, timeout=10)
         response.raise_for_status()
-        
-        # 保存登录页面HTML用于调试
-        with open('debug_login_page.html', 'w', encoding='utf-8') as f:
-            f.write(response.text)
-        print("登录页面HTML已保存到debug_login_page.html")
-        
     except requests.RequestException as e:
         raise Exception(f"无法访问登录页面: {e}")
     
@@ -138,11 +132,6 @@ def login_and_get_cookie():
     try:
         login_response = session.post(login_check_url, data=login_data, timeout=10)
         login_response.raise_for_status()
-        
-        # 保存响应用于调试
-        with open('debug_login_response.html', 'w', encoding='utf-8') as f:
-            f.write(login_response.text)
-        print("登录响应已保存到debug_login_response.html")
         
         # 获取所有cookie
         cookie_dict = session.cookies.get_dict()
@@ -168,11 +157,11 @@ def login_and_get_cookie():
 
 def get_login_config():
     """获取登录配置"""
-    username = os.environ.get('WNACG_USERNAME') or LOGIN_CONFIG.get('username')
-    password = os.environ.get('WNACG_PASSWORD') or LOGIN_CONFIG.get('password')
+    username = os.environ.get('WNACG_USERNAME')
+    password = os.environ.get('WNACG_PASSWORD')
     
     if not username or not password:
-        raise ValueError('请在config.py中设置LOGIN_CONFIG或设置环境变量WNACG_USERNAME和WNACG_PASSWORD')
+        raise ValueError('请设置环境变量WNACG_USERNAME和WNACG_PASSWORD')
     
     return username, password
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ZIP文件按作者分类脚本
-将url目录下的ZIP文件按作者分类到class目录下的不同文件夹中
+将downloads目录下的ZIP文件按作者分类到class目录下的不同文件夹中
 基于name.csv中的作者列表进行匹配，支持模糊匹配
 """
 
@@ -112,30 +112,7 @@ def normalize_author_name(author: str) -> str:
     
     return normalized
 
-def extract_circle_name(author: str) -> str:
-    """
-    从作者字符串中提取社团/圈子名称（去除括号内的个人作者名）
-    
-    Args:
-        author: 作者字符串
-        
-    Returns:
-        社团名称
-    """
-    # 匹配形如 "社团名（个人名）" 或 "社团名 (个人名)" 的格式
-    import re
-    
-    # 先处理全角括号
-    match = re.match(r'^(.+?)（[^）]*）', author)
-    if match:
-        return match.group(1).strip()
-    
-    # 再处理半角括号
-    match = re.match(r'^(.+?) \([^)]*\)', author)
-    if match:
-        return match.group(1).strip()
-    
-    return author
+ 
 
 def extract_author_variants(author: str) -> List[str]:
     """
@@ -263,7 +240,7 @@ def group_files_by_author(url_dir: Path, known_authors: Set[str]):
     按作者对文件进行分组
     
     Args:
-        url_dir: url目录路径
+        url_dir: downloads目录路径
         known_authors: 已知作者集合
         
     Returns:
@@ -353,7 +330,7 @@ def create_author_directories(url_dir: Path, class_dir: Path, known_author_group
     创建作者目录并移动文件到class目录
     
     Args:
-        url_dir: url目录路径
+        url_dir: downloads目录路径
         class_dir: class目录路径  
         known_author_groups: 已知作者分组
         unknown_author_groups: 未知作者分组
@@ -510,12 +487,12 @@ def main():
     
     # 获取目录路径
     current_dir = Path(__file__).parent
-    url_dir = current_dir / "url"
+    url_dir = current_dir / "downloads"
     class_dir = current_dir / "class"
     csv_path = current_dir / "name.csv"
     
     if not url_dir.exists():
-        print(f"错误: url目录不存在: {url_dir}")
+        print(f"错误: downloads目录不存在: {url_dir}")
         return
     
     if not csv_path.exists():

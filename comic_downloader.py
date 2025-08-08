@@ -8,17 +8,7 @@ import re
 import logging
 
 from playwright.async_api import async_playwright, Page, BrowserContext
-from config import API_DOMAIN, LOGIN_CONFIG, DIRECTORIES, get_cookie
-
-# 下载配置
-DOWNLOAD_CONFIG = {
-    "page_timeout": 120000,  # 页面加载超时时间 (2分钟)
-    "download_timeout": 600000,  # 下载超时时间 (10分钟)
-    "max_retries": 3,  # 最大重试次数
-    "retry_delay": 5000,  # 重试间隔 (5秒)
-    "auto_extract": False,  # 不自动解压
-    "skip_confirmation": True  # 跳过确认提示
-}
+from config import API_DOMAIN, DIRECTORIES, DOWNLOAD_CONFIG, get_cookie, get_login_config
 
 def setup_comic_logger() -> logging.Logger:
     """设置漫画下载器的日志系统"""
@@ -80,9 +70,8 @@ async def save_download_with_progress(download, save_path: str):
         elif file_size > 1024:
             size_str = f"{file_size / 1024:.2f} KB"
         else:
-            size_str = f"{file_size} bytes"
-        
-        # 计算下载速度
+            size_str = f"{file_size} B"
+ 
         if elapsed_time > 0:
             speed = file_size / elapsed_time
             if speed > 1024 * 1024:
@@ -256,26 +245,33 @@ async def login_to_site(page: Page) -> bool:
             logger.error("无法找到密码输入框")
             return False
         
+        # 获取登录配置
+        try:
+            username, password = get_login_config()
+        except ValueError as e:
+            logger.error(f"获取登录配置失败: {e}")
+            return False
+        
         # 输入用户名和密码 - 添加重试机制
         logger.info("正在输入登录信息...")
         
         # 填写用户名 - 重试机制
         for attempt in range(3):
             try:
-                logger.info(f"填写用户名: {LOGIN_CONFIG['username']} (尝试 {attempt + 1}/3)")
+                logger.info(f"填写用户名: {username} (尝试 {attempt + 1}/3)")
                 await username_input.click()  # 先点击聚焦
                 await page.wait_for_timeout(500)
                 await username_input.clear()
-                await username_input.type(LOGIN_CONFIG['username'], delay=100)  # 逐字符输入，更慢
+                await username_input.type(username, delay=100)  # 逐字符输入，更慢
                 await page.wait_for_timeout(1000)
                 
                 # 验证是否填写成功
                 current_value = await username_input.input_value()
-                if current_value == LOGIN_CONFIG['username']:
+                if current_value == username:
                     logger.info("用户名填写成功")
                     break
                 else:
-                    logger.warning(f"用户名填写验证失败，期望: '{LOGIN_CONFIG['username']}', 实际: '{current_value}'")
+                    logger.warning(f"用户名填写验证失败，期望: '{username}', 实际: '{current_value}'")
             except Exception as e:
                 logger.error(f"用户名填写失败 (尝试 {attempt + 1}): {e}")
                 if attempt == 2:
@@ -285,20 +281,20 @@ async def login_to_site(page: Page) -> bool:
         # 填写密码 - 重试机制
         for attempt in range(3):
             try:
-                logger.info(f"填写密码: {'*' * len(LOGIN_CONFIG['password'])} (尝试 {attempt + 1}/3)")
+                logger.info(f"填写密码: {'*' * len(password)} (尝试 {attempt + 1}/3)")
                 await password_input.click()  # 先点击聚焦
                 await page.wait_for_timeout(500)
                 await password_input.clear()
-                await password_input.type(LOGIN_CONFIG['password'], delay=100)  # 逐字符输入，更慢
+                await password_input.type(password, delay=100)  # 逐字符输入，更慢
                 await page.wait_for_timeout(1000)
                 
                 # 验证是否填写成功
                 current_value = await password_input.input_value()
-                if len(current_value) == len(LOGIN_CONFIG['password']):
+                if len(current_value) == len(password):
                     logger.info("密码填写成功")
                     break
                 else:
-                    logger.warning(f"密码填写验证失败，期望长度: {len(LOGIN_CONFIG['password'])}, 实际长度: {len(current_value)}")
+                    logger.warning(f"密码填写验证失败，期望长度: {len(password)}, 实际长度: {len(current_value)}")
             except Exception as e:
                 logger.error(f"密码填写失败 (尝试 {attempt + 1}): {e}")
                 if attempt == 2:
@@ -883,8 +879,10 @@ async def main():
     
     try:
         # 检查登录配置
-        if not LOGIN_CONFIG.get('username') or not LOGIN_CONFIG.get('password'):
-            error_msg = "错误: 请在config.py中配置LOGIN_CONFIG用户名和密码"
+        try:
+            get_login_config()
+        except ValueError as e:
+            error_msg = f"错误: {e}"
             print(error_msg)
             logger.error(error_msg)
             return
@@ -900,8 +898,11 @@ async def main():
         comic_id = int(comic_id)
         logger.info(f"用户输入漫画ID: {comic_id}")
         
+        print(f"🚀 开始下载漫画 [{comic_id}]...")
+        
         async with async_playwright() as p:
             # 启动浏览器
+            print("启动浏览器...")
             browser = await p.chromium.launch(headless=False)  # 设为False可以看到浏览器操作
             context = await browser.new_context()
             page = await context.new_page()
@@ -910,20 +911,26 @@ async def main():
             
             try:
                 # 使用Cookie登录
+                print("正在登录...")
                 login_success = await login_with_cookies(page)
                 if not login_success:
-                    error_msg = "登录失败，无法继续"
+                    error_msg = "❌ 登录失败，无法继续"
                     print(error_msg)
                     logger.error(error_msg)
                     return
                 
+                print("✅ 登录成功")
+                
                 # 下载漫画
+                print(f"📥 正在下载漫画 [{comic_id}]...")
                 logger.info(f"开始下载漫画 ID: {comic_id}")
                 success = await download_comic(page, comic_id)
                 
                 if success:
+                    print("✅ 下载完成!")
                     logger.info("下载完成!")
                 else:
+                    print("❌ 下载失败")
                     logger.error("下载失败")
                     
             finally:

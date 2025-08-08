@@ -14,7 +14,7 @@ from datetime import datetime
 
 from playwright.async_api import async_playwright
 from comic_downloader import download_comic, login_with_cookies, DOWNLOAD_CONFIG
-from config import DIRECTORIES, get_cookie, get_login_config
+from config import DIRECTORIES, get_login_config
 
 
 def setup_logging() -> logging.Logger:
@@ -54,8 +54,8 @@ class BatchDownloadManager:
         progress_percent = (self.current_index / self.total_comics * 100) if self.total_comics > 0 else 0
         elapsed = datetime.now() - self.start_time if self.start_time else 0
         
-        # 终端只显示简要信息
-        print(f"[{self.current_index}/{self.total_comics}] ({progress_percent:.1f}%) 下载: [{comic_id}] {comic_title[:50]}{'...' if len(comic_title) > 50 else ''}")
+        # 终端只显示简要信息 - 只显示ID，不显示标题
+        print(f"[{self.current_index}/{self.total_comics}] ({progress_percent:.1f}%) 下载: [{comic_id}]")
         
         # 详细信息记录到日志
         self.logger.info(f"Progress: {self.current_index}/{self.total_comics} ({progress_percent:.1f}%)")
@@ -173,7 +173,7 @@ async def download_comics_from_json(json_file_path: str, logger, start_index: in
     
     # 检查登录配置
     try:
-        username, password = get_login_config()
+        get_login_config()  # 验证配置存在
     except ValueError as e:
         error_msg = f"登录配置错误: {e}"
         print(f"❌ {error_msg}")
