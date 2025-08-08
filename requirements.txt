@@ -9,8 +9,5 @@ lxml>=4.9.0
 # Browser automation
 playwright>=1.40.0
 
-# Data processing (for CSV handling in classify_by_author.py)
-pandas>=1.5.0
-
 # Additional utilities
 urllib3>=1.26.0

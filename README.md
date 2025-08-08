@@ -18,20 +18,29 @@
 ### 项目结构
 
 ```
-├── config.py              # 配置管理和认证设置
-├── get_shelf_info.py      # 书架信息爬取脚本
-├── comic_downloader.py    # 漫画下载脚本
-├── batch_download.py      # 批量下载脚本
-├── classify_by_author.py  # 按作者分类脚本
-├── requirements.txt       # 依赖包列表
-├── CLAUDE.md             # 项目开发指南
-├── 需求.md               # 中文需求文档
-└── name.csv              # 作者名称数据
+├── config.py               # 配置管理和认证设置
+├── get_shelf_info.py       # 书架信息爬取脚本
+├── search_id.py            # 站内搜索与结果保存（关键词/标签）
+├── comic_downloader.py     # 单个漫画下载（Playwright）
+├── batch_download.py       # 批量下载（基于书架 JSON）
+├── classify_by_author.py   # 按作者对已下载 ZIP 分类
+├── requirements.txt        # 依赖包列表
+├── CLAUDE.md               # 项目开发与维护说明
+└── name.csv                # 作者名称数据（CSV，列：ID, Name）
 ```
 
 ### 安装依赖
 
 ```bash
+pip install -r requirements.txt
+playwright install chromium
+```
+
+可选（建议使用虚拟环境）：
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows 使用: .venv\\Scripts\\activate
 pip install -r requirements.txt
 playwright install chromium
 ```
@@ -58,6 +67,11 @@ export WNACG_PASSWORD="your_password"
 export WNACG_COOKIE="your_cookie"
 ```
 
+注意：
+- 不要在仓库中提交真实账号/密码或 Cookie。推荐使用环境变量。
+- 运行 `python config.py` 可尝试自动登录并在本地生成 `cookie.json`；若站点策略变更导致失败，请手动设置有效 Cookie。
+- 为安全起见，日志中不会打印完整 Cookie；请妥善保管 `cookie.json`。
+
 ### 使用方法
 
 **提取书架信息:**
@@ -65,6 +79,17 @@ export WNACG_COOKIE="your_cookie"
 python get_shelf_info.py
 ```
 书架数据将导出到 `search_results/shelf_{name}_{timestamp}.json`
+
+**站内搜索（关键词/标签）并保存结果:**
+```bash
+# 交互模式（推荐）
+python search_id.py interactive
+
+# 命令行
+python search_id.py keyword "<关键词>" [页码]
+python search_id.py tag "<标签>" [页码]
+```
+搜索结果可按匹配度展示，并可保存为与书架一致结构的 JSON（位于 `search_results/`）。
 
 **按作者分类:**
 ```bash
@@ -102,6 +127,8 @@ python batch_download.py
 - 当前 API 域名为 `www.wnacg01.cc`，如有变更请更新 `config.py` 中的 `API_DOMAIN`
 - 下载功能包含重试机制和 SSL 警告处理
 - 所有敏感文件已在 `.gitignore` 中排除
+- 如遇证书警告，Playwright 已做处理；仍可在浏览器上下文启用 `ignore_https_errors=True`（代码中已有处理路径）。
+- 建议适当控制请求频率，避免过快访问导致风控。
 
 ---
 
@@ -121,6 +148,15 @@ A Python-based WNACG manga site scraper that extracts user shelf information and
 ### Installation
 
 ```bash
+pip install -r requirements.txt
+playwright install chromium
+```
+
+Optionally use a virtual environment:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 playwright install chromium
 ```
@@ -154,6 +190,17 @@ export WNACG_COOKIE="your_cookie"
 python get_shelf_info.py
 ```
 Shelf data will be exported to `search_results/shelf_{name}_{timestamp}.json`
+
+**Search by keyword or tag and save results:**
+```bash
+# Interactive mode
+python search_id.py interactive
+
+# CLI
+python search_id.py keyword "<keyword>" [page]
+python search_id.py tag "<tag>" [page]
+```
+Search results can be saved as JSON in the same structure as shelf data under `search_results/`.
 
 **Classify by author:**
 ```bash
@@ -193,6 +240,8 @@ Shelf data JSON structure:
 - All sensitive files are excluded in `.gitignore`
 - Downloads are optimized with long timeouts for slow networks
 - Comprehensive logging system with separate log files for single and batch downloads
+- Avoid committing real credentials or cookies; prefer environment variables. `python config.py` can help generate `cookie.json` locally.
+- Consider rate limiting to avoid being flagged by anti-bot measures.
 
 ### License
 
