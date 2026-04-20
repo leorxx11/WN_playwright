@@ -7,6 +7,7 @@ from datetime import datetime
 import os
 
 import aiohttp
+from aiohttp import TCPConnector, ClientTimeout
 from bs4 import BeautifulSoup
 
 # 从配置文件导入
@@ -32,14 +33,22 @@ class GetFavoriteResult:
     total_page: int
     shelf: Shelf
 
-async def get_favorite(session: aiohttp.ClientSession, cookie: str, shelf_id: int, page_num: int) -> GetFavoriteResult:
+async def get_favorite(session: aiohttp.ClientSession, cookie: str, shelf_id: int, page_num: int, retry: int = 3) -> GetFavoriteResult:
     url = f"https://{API_DOMAIN}/users-users_fav-page-{page_num}-c-{shelf_id}.html"
     headers = get_request_headers_with_cookie(cookie)
-    async with session.get(url, headers=headers) as resp:
-        text = await resp.text()
-        if resp.status != 200:
-            raise RuntimeError(f"Unexpected status {resp.status}: {text}")
-    return parse_get_favorite(text)
+    
+    for attempt in range(retry):
+        try:
+            async with session.get(url, headers=headers) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    raise RuntimeError(f"Unexpected status {resp.status}: {text}")
+                return parse_get_favorite(text)
+        except (aiohttp.ClientConnectorError, asyncio.TimeoutError) as e:
+            if attempt == retry - 1:
+                raise RuntimeError(f"连接失败，已重试 {retry} 次: {e}")
+            print(f"连接失败 (尝试 {attempt + 1}/{retry}), 3秒后重试...")
+            await asyncio.sleep(3)
 
 def parse_get_favorite(html: str) -> GetFavoriteResult:
     soup = BeautifulSoup(html, "html.parser")
@@ -87,22 +96,34 @@ def parse_shelf(a):
     name = a.get_text(strip=True)
     return Shelf(id, name)
 
-async def get_shelves(session: aiohttp.ClientSession, cookie: str) -> List[Shelf]:
+async def get_shelves(session: aiohttp.ClientSession, cookie: str, retry: int = 3) -> List[Shelf]:
     """获取所有书架列表"""
     url = f"https://{API_DOMAIN}/users-users_fav-page-1-c-0.html"
     headers = get_request_headers_with_cookie(cookie)
-    async with session.get(url, headers=headers) as resp:
-        text = await resp.text()
-        if resp.status != 200:
-            raise RuntimeError(f"Unexpected status {resp.status}: {text}")
     
-    # 检查是否需要登录
-    if "您沒有權限，需要登錄" in text or "需要登錄" in text:
-        raise ValueError("Cookie已过期或无效，需要重新登录获取有效的Cookie")
-    
-    soup = BeautifulSoup(text, "html.parser")
-    shelves = [parse_shelf(a) for a in soup.select('.nav_list > a')]
-    return shelves
+    for attempt in range(retry):
+        try:
+            async with session.get(url, headers=headers) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    raise RuntimeError(f"Unexpected status {resp.status}: {text}")
+            
+            # 检查是否需要登录
+            if "您沒有權限，需要登錄" in text or "需要登錄" in text:
+                raise ValueError("Cookie已过期或无效，需要重新登录获取有效的Cookie")
+            
+            soup = BeautifulSoup(text, "html.parser")
+            shelves = [parse_shelf(a) for a in soup.select('.nav_list > a')]
+            return shelves
+        except (aiohttp.ClientConnectorError, asyncio.TimeoutError) as e:
+            if attempt == retry - 1:
+                raise RuntimeError(f"无法连接到 {API_DOMAIN}，请检查:\n"
+                                 f"1. 域名是否正确 (当前: {API_DOMAIN})\n"
+                                 f"2. 网络连接是否正常\n"
+                                 f"3. 是否需要配置代理\n"
+                                 f"原始错误: {e}")
+            print(f"连接失败 (尝试 {attempt + 1}/{retry}), 3秒后重试...")
+            await asyncio.sleep(3)
 
 async def get_all_comics_from_shelf(session: aiohttp.ClientSession, cookie: str, shelf_id: int) -> List[ComicInFavorite]:
     """获取指定书架的所有书籍（所有分页）"""
@@ -131,7 +152,19 @@ async def get_all_comics_from_shelf(session: aiohttp.ClientSession, cookie: str,
     return all_comics
 
 async def main(cookie: str, shelf_id: int = None):
-    async with aiohttp.ClientSession() as session:
+    # 配置连接参数，使用系统代理
+    timeout = ClientTimeout(total=30, connect=10, sock_read=10)
+    connector = TCPConnector(
+        limit=10,
+        ttl_dns_cache=300,
+        ssl=False  # 禁用SSL验证以避免证书问题
+    )
+    
+    async with aiohttp.ClientSession(
+        timeout=timeout,
+        connector=connector,
+        trust_env=True  # 使用系统代理设置
+    ) as session:
         # 如果没有指定书架ID，先获取书架列表让用户选择
         if shelf_id is None:
             print("正在获取书架列表...")

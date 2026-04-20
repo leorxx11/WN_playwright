@@ -6,23 +6,67 @@ import os
 import json
 import requests
 from datetime import datetime
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 # 加载.env文件中的环境变量
 load_dotenv()
 
-# API域名配置
-API_DOMAIN = "www.wnacg01.cc"
+# User-Agent配置
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+
+# Cookie文件路径
+COOKIE_FILE = "cookie.json"
+
+# API域名配置（支持通过环境变量覆盖）
+DEFAULT_API_DOMAIN = "www.wnacg01.cc"
+
+
+def _load_domain_from_cookie_file():
+    """从cookie文件读取最近一次成功登录的域名"""
+    if not os.path.exists(COOKIE_FILE):
+        return None
+
+    try:
+        with open(COOKIE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            domain = data.get('domain')
+            return domain if domain else None
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _resolve_active_domain(seed_domain):
+    """
+    解析当前可用域名。
+    站点会频繁 301 到新域名，不能固定写死。
+    """
+    try:
+        resp = requests.get(
+            f"https://{seed_domain}/",
+            headers={'User-Agent': USER_AGENT},
+            timeout=8,
+            allow_redirects=True
+        )
+        parsed = urlparse(resp.url)
+        if parsed.netloc:
+            return parsed.netloc
+    except requests.RequestException:
+        pass
+
+    return seed_domain
+
+
+# 优先级：环境变量 > cookie文件缓存域名 > 默认域名，然后解析实际重定向域名
+_env_domain = os.environ.get('WNACG_API_DOMAIN')
+_seed_domain = _env_domain or _load_domain_from_cookie_file() or DEFAULT_API_DOMAIN
+API_DOMAIN = _env_domain or _resolve_active_domain(_seed_domain)
 
 # 登录配置现在完全通过环境变量 WNACG_USERNAME 和 WNACG_PASSWORD 管理
 
 
 # Cookie现在自动管理，不需要手动配置
 # 运行 python config.py 自动登录并生成cookie
-
-
-# User-Agent配置
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
 # 下载配置
 DOWNLOAD_CONFIG = {
@@ -50,9 +94,6 @@ DIRECTORIES = {
     "downloads": "downloads",  # 漫画下载目录
 }
 
-# Cookie文件路径
-COOKIE_FILE = "cookie.json"
-
 def load_cookie_from_file():
     """从JSON文件加载cookie"""
     if os.path.exists(COOKIE_FILE):
@@ -69,12 +110,12 @@ def load_cookie_from_file():
             print(f"Cookie文件格式错误: {e}")
     return None
 
-def save_cookie_to_file(cookie):
+def save_cookie_to_file(cookie, domain=None):
     """保存cookie到JSON文件"""
     data = {
         'cookie': cookie,
         'created_at': datetime.now().isoformat(),
-        'domain': API_DOMAIN
+        'domain': domain or API_DOMAIN
     }
     with open(COOKIE_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -82,6 +123,8 @@ def save_cookie_to_file(cookie):
 
 def get_cookie():
     """获取Cookie，优先级：JSON文件 > 自动登录获取"""
+    global API_DOMAIN
+
     # 先尝试从文件加载
     cookie = load_cookie_from_file()
     if cookie:
@@ -90,8 +133,9 @@ def get_cookie():
     # 如果没有有效cookie，尝试自动登录获取
     print("没有有效的cookie，尝试自动登录...")
     try:
-        cookie = login_and_get_cookie()
-        save_cookie_to_file(cookie)
+        cookie, domain = login_and_get_cookie()
+        API_DOMAIN = domain
+        save_cookie_to_file(cookie, domain)
         return cookie
     except Exception as e:
         print(f"自动登录失败: {e}")
@@ -100,23 +144,32 @@ def get_cookie():
 def login_and_get_cookie():
     """自动登录获取cookie"""
     username, password = get_login_config()
-    
+
     session = requests.Session()
     session.headers.update({
         'User-Agent': USER_AGENT,
         'Referer': f'https://{API_DOMAIN}/'
     })
-    
+
     # 首先获取登录页面
     login_url = f"https://{API_DOMAIN}/users-login.html"
     print(f"访问登录页面: {login_url}")
-    
+
     try:
-        response = session.get(login_url, timeout=10)
+        response = session.get(login_url, timeout=10, allow_redirects=True)
         response.raise_for_status()
     except requests.RequestException as e:
         raise Exception(f"无法访问登录页面: {e}")
-    
+
+    # 关键：使用登录页最终落地域名发起POST，避免301导致表单数据丢失
+    parsed = urlparse(response.url)
+    active_domain = parsed.netloc or API_DOMAIN
+
+    # 更新Referer，确保和实际域名一致
+    session.headers.update({
+        'Referer': f'https://{active_domain}/users-login.html'
+    })
+
     # 准备正确的登录数据
     login_data = {
         'login_name': username,
@@ -124,32 +177,37 @@ def login_and_get_cookie():
         'normal': '1',
         'submit': '登錄'
     }
-    
-    # 发送登录请求到正确的URL
-    login_check_url = f"https://{API_DOMAIN}/users-check_login.html"
+
+    # 发送登录请求到当前有效域名
+    login_check_url = f"https://{active_domain}/users-check_login.html"
     print("正在登录...")
-    
+
     try:
         login_response = session.post(login_check_url, data=login_data, timeout=10)
         login_response.raise_for_status()
-        
+
         # 获取所有cookie
         cookie_dict = session.cookies.get_dict()
         cookie_string = '; '.join([f"{k}={v}" for k, v in cookie_dict.items()])
-        
+
         print(f"获取到cookie: {cookie_string[:100]}{'...' if len(cookie_string) > 100 else ''}")
-        
+
         # 检查cookie是否有效
         if len(cookie_string) > 50:  # 确保cookie不为空
             print("登录成功，获取到cookie！")
-            return cookie_string
+            return cookie_string, active_domain
         else:
             # 查看响应内容以确定登录状态
-            if "登錄失敗" in login_response.text or "密碼錯誤" in login_response.text:
+            if (
+                "登錄失敗" in login_response.text
+                or "密碼錯誤" in login_response.text
+                or "請輸入用戶名" in login_response.text
+                or "请输入用户名" in login_response.text
+            ):
                 raise Exception("用户名或密码错误")
             else:
                 raise Exception(f"登录后未获取到有效的cookie，响应长度: {len(login_response.text)}")
-                
+
     except requests.RequestException as e:
         raise Exception(f"登录请求失败: {e}")
 
