@@ -11,3 +11,4 @@ playwright>=1.40.0
 
 # Additional utilities
 urllib3>=1.26.0
+python-dotenv>=1.0.0

@@ -89,11 +89,20 @@ class BatchDownloadManager:
 
 
 def find_shelf_json_files() -> List[str]:
-    """查找search_results目录下的所有书架JSON文件"""
+    """查找search_results目录下可用于批量下载的JSON文件"""
     search_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIRECTORIES['search_results'])
-    pattern = os.path.join(search_dir, "shelf_*.json")
-    json_files = glob.glob(pattern)
-    return sorted(json_files, key=os.path.getmtime, reverse=True)  # 按修改时间排序，最新的在前
+    patterns = [
+        os.path.join(search_dir, "shelf_*.json"),
+        os.path.join(search_dir, "search_*.json"),
+    ]
+
+    json_files = []
+    for pattern in patterns:
+        json_files.extend(glob.glob(pattern))
+
+    # 去重并按修改时间排序，最新的在前
+    json_files = sorted(set(json_files), key=os.path.getmtime, reverse=True)
+    return json_files
 
 
 def load_comics_from_json(json_file_path: str, logger) -> List[Dict]:
@@ -104,14 +113,21 @@ def load_comics_from_json(json_file_path: str, logger) -> List[Dict]:
         
         comics = data.get('comics', [])
         shelf_info = data.get('shelf_metadata', {})
+        search_info = data.get('search_metadata', {})
         
         # 终端显示简要信息
         print(f"加载了 {len(comics)} 部漫画 from {os.path.basename(json_file_path)}")
         
         # 详细信息记录到日志
         logger.info(f"Loaded {len(comics)} comics from {json_file_path}")
-        logger.info(f"Shelf name: {shelf_info.get('shelf_name', 'Unknown')}")
-        logger.info(f"Export time: {shelf_info.get('export_time', 'Unknown')}")
+        if shelf_info:
+            logger.info(f"Shelf name: {shelf_info.get('shelf_name', 'Unknown')}")
+            logger.info(f"Export time: {shelf_info.get('export_time', 'Unknown')}")
+        elif search_info:
+            logger.info(f"Search query: {search_info.get('search_query', 'Unknown')}")
+            logger.info(f"Search time: {search_info.get('search_time', 'Unknown')}")
+        else:
+            logger.info("No shelf/search metadata found in JSON file")
         
         return comics
     except Exception as e:
@@ -126,12 +142,12 @@ def select_json_file(logger) -> str:
     json_files = find_shelf_json_files()
     
     if not json_files:
-        msg = "未找到任何书架JSON文件，请先运行 get_shelf_info.py"
+        msg = "未找到可用JSON文件，请先运行 get_shelf_info.py 或 search_id.py"
         print(f"❌ {msg}")
         logger.error(msg)
         return None
     
-    print("\n可用的书架JSON文件:")
+    print("\n可用的JSON文件:")
     for i, json_file in enumerate(json_files):
         filename = os.path.basename(json_file)
         # 尝试从文件名解析书架名称和时间
