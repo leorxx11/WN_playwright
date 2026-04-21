@@ -8,6 +8,7 @@ import requests
 from datetime import datetime
 from urllib.parse import urlparse
 from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright
 
 # 加载.env文件中的环境变量
 load_dotenv()
@@ -19,7 +20,12 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 COOKIE_FILE = "cookie.json"
 
 # API域名配置（支持通过环境变量覆盖）
-DEFAULT_API_DOMAIN = "www.wnacg01.cc"
+DEFAULT_API_DOMAIN = "wnacg.com"
+FALLBACK_API_DOMAINS = [
+    "wnacg.com",
+    "www.wn03.cfd",
+    "www.wnacg01.cc",
+]
 
 
 def _load_domain_from_cookie_file():
@@ -41,18 +47,33 @@ def _resolve_active_domain(seed_domain):
     解析当前可用域名。
     站点会频繁 301 到新域名，不能固定写死。
     """
-    try:
-        resp = requests.get(
-            f"https://{seed_domain}/",
-            headers={'User-Agent': USER_AGENT},
-            timeout=8,
-            allow_redirects=True
-        )
-        parsed = urlparse(resp.url)
-        if parsed.netloc:
-            return parsed.netloc
-    except requests.RequestException:
-        pass
+    def _is_login_page_valid(html_text):
+        markers = [
+            'name="login_name"',
+            "name='login_name'",
+            'users-check_login.html',
+            '用戶登錄',
+            '用户登录',
+        ]
+        return any(marker in html_text for marker in markers)
+
+    candidates = [seed_domain] + [d for d in FALLBACK_API_DOMAINS if d != seed_domain]
+
+    for candidate in candidates:
+        try:
+            resp = requests.get(
+                f"https://{candidate}/users-login.html",
+                headers={'User-Agent': USER_AGENT},
+                timeout=8,
+                allow_redirects=True
+            )
+            parsed = urlparse(resp.url)
+            final_domain = parsed.netloc or candidate
+
+            if _is_login_page_valid(resp.text):
+                return final_domain
+        except requests.RequestException:
+            continue
 
     return seed_domain
 
@@ -142,16 +163,112 @@ def get_cookie():
         raise ValueError('无法获取有效的Cookie，请检查登录配置')
 
 def login_and_get_cookie():
-    """自动登录获取cookie"""
+    """自动登录获取cookie（优先使用Playwright完整浏览器流程）"""
     username, password = get_login_config()
+    active_seed_domain = _resolve_active_domain(API_DOMAIN)
 
+    print("正在通过Playwright浏览器登录...")
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=False)
+            context = browser.new_context(user_agent=USER_AGENT)
+            page = context.new_page()
+
+            login_url = f"https://{active_seed_domain}/users-login.html"
+            print(f"访问登录页面: {login_url}")
+            page.goto(login_url, timeout=60000, wait_until='domcontentloaded')
+
+            parsed = urlparse(page.url)
+            active_domain = parsed.netloc or API_DOMAIN
+
+            # 填写登录信息（兼容多种表单命名）
+            username_selectors = [
+                'input[name="login_name"]',
+                'input[name="username"]',
+                'input[type="text"]',
+            ]
+            password_selectors = [
+                'input[name="login_pass"]',
+                'input[name="password"]',
+                'input[type="password"]',
+            ]
+
+            username_locator = None
+            for selector in username_selectors:
+                if page.locator(selector).count() > 0:
+                    username_locator = page.locator(selector).first
+                    break
+
+            password_locator = None
+            for selector in password_selectors:
+                if page.locator(selector).count() > 0:
+                    password_locator = page.locator(selector).first
+                    break
+
+            if not username_locator or not password_locator:
+                raise Exception("未找到登录输入框，当前域名可能不是有效登录页")
+
+            username_locator.fill(username, timeout=10000)
+            password_locator.fill(password, timeout=10000)
+
+            # 触发登录提交（兼容按钮和input提交）
+            submit_selectors = [
+                'button[type="submit"]',
+                'input[type="submit"]',
+                'button:has-text("登錄")',
+                'button:has-text("登录")',
+            ]
+            submitted = False
+            for selector in submit_selectors:
+                if page.locator(selector).count() > 0:
+                    page.locator(selector).first.click()
+                    submitted = True
+                    break
+
+            if not submitted:
+                page.keyboard.press('Enter')
+
+            try:
+                page.wait_for_load_state('networkidle', timeout=15000)
+            except Exception:
+                page.wait_for_timeout(3000)
+
+            cookies = context.cookies()
+            domain_key = active_domain.split(':')[0]
+
+            filtered_pairs = []
+            for cookie in cookies:
+                cookie_domain = cookie.get('domain', '').lstrip('.')
+                if cookie_domain.endswith(domain_key):
+                    filtered_pairs.append(f"{cookie['name']}={cookie['value']}")
+
+            if not filtered_pairs:
+                filtered_pairs = [f"{cookie['name']}={cookie['value']}" for cookie in cookies]
+
+            cookie_string = '; '.join(filtered_pairs)
+            print(f"获取到cookie: {cookie_string[:100]}{'...' if len(cookie_string) > 100 else ''}")
+
+            browser.close()
+
+            if len(cookie_string) > 50:
+                print("登录成功，获取到cookie！")
+                return cookie_string, active_domain
+
+            raise Exception("Playwright登录后未获取到有效cookie")
+
+    except Exception as playwright_error:
+        print(f"Playwright登录失败，回退requests方式: {playwright_error}")
+        return _login_and_get_cookie_via_requests(username, password)
+
+
+def _login_and_get_cookie_via_requests(username, password):
+    """备用方案：通过requests登录获取cookie"""
     session = requests.Session()
     session.headers.update({
         'User-Agent': USER_AGENT,
         'Referer': f'https://{API_DOMAIN}/'
     })
 
-    # 首先获取登录页面
     login_url = f"https://{API_DOMAIN}/users-login.html"
     print(f"访问登录页面: {login_url}")
 
@@ -161,16 +278,10 @@ def login_and_get_cookie():
     except requests.RequestException as e:
         raise Exception(f"无法访问登录页面: {e}")
 
-    # 关键：使用登录页最终落地域名发起POST，避免301导致表单数据丢失
     parsed = urlparse(response.url)
     active_domain = parsed.netloc or API_DOMAIN
+    session.headers.update({'Referer': f'https://{active_domain}/users-login.html'})
 
-    # 更新Referer，确保和实际域名一致
-    session.headers.update({
-        'Referer': f'https://{active_domain}/users-login.html'
-    })
-
-    # 准备正确的登录数据
     login_data = {
         'login_name': username,
         'login_pass': password,
@@ -178,7 +289,6 @@ def login_and_get_cookie():
         'submit': '登錄'
     }
 
-    # 发送登录请求到当前有效域名
     login_check_url = f"https://{active_domain}/users-check_login.html"
     print("正在登录...")
 
@@ -186,27 +296,24 @@ def login_and_get_cookie():
         login_response = session.post(login_check_url, data=login_data, timeout=10)
         login_response.raise_for_status()
 
-        # 获取所有cookie
         cookie_dict = session.cookies.get_dict()
         cookie_string = '; '.join([f"{k}={v}" for k, v in cookie_dict.items()])
 
         print(f"获取到cookie: {cookie_string[:100]}{'...' if len(cookie_string) > 100 else ''}")
 
-        # 检查cookie是否有效
-        if len(cookie_string) > 50:  # 确保cookie不为空
+        if len(cookie_string) > 50:
             print("登录成功，获取到cookie！")
             return cookie_string, active_domain
-        else:
-            # 查看响应内容以确定登录状态
-            if (
-                "登錄失敗" in login_response.text
-                or "密碼錯誤" in login_response.text
-                or "請輸入用戶名" in login_response.text
-                or "请输入用户名" in login_response.text
-            ):
-                raise Exception("用户名或密码错误")
-            else:
-                raise Exception(f"登录后未获取到有效的cookie，响应长度: {len(login_response.text)}")
+
+        if (
+            "登錄失敗" in login_response.text
+            or "密碼錯誤" in login_response.text
+            or "請輸入用戶名" in login_response.text
+            or "请输入用户名" in login_response.text
+        ):
+            raise Exception("用户名或密码错误")
+
+        raise Exception(f"登录后未获取到有效的cookie，响应长度: {len(login_response.text)}")
 
     except requests.RequestException as e:
         raise Exception(f"登录请求失败: {e}")
