@@ -9,6 +9,7 @@ import os
 import glob
 import logging
 import re
+import random
 from typing import List, Dict
 from datetime import datetime
 
@@ -232,9 +233,11 @@ async def download_comics_from_json(json_file_path: str, logger, start_index: in
     logger.info(f"Starting batch download of {len(comics)} comics")
     
     async with async_playwright() as p:
-        # 启动浏览器
-        browser = await p.chromium.launch(headless=False)  # 可视化下载过程
-        context = await browser.new_context()
+        profile_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.playwright_profile')
+        context = await p.chromium.launch_persistent_context(
+            profile_dir,
+            headless=False,
+        )
         page = await context.new_page()
         
         # 设置页面超时
@@ -291,7 +294,7 @@ async def download_comics_from_json(json_file_path: str, logger, start_index: in
                     
                     # 在每次下载后等待一段时间，避免过于频繁的请求
                     if i < len(comics) - 1:  # 不是最后一个
-                        wait_time = 3  # 等待3秒
+                        wait_time = random.randint(1, 5)
                         print(f"等待{wait_time}秒...")
                         logger.info(f"Waiting {wait_time} seconds before next download...")
                         await asyncio.sleep(wait_time)
@@ -303,7 +306,7 @@ async def download_comics_from_json(json_file_path: str, logger, start_index: in
                     continue
             
         finally:
-            await browser.close()
+            await context.close()
             
             # 打印下载总结
             manager.print_summary()

@@ -903,8 +903,11 @@ async def main():
         async with async_playwright() as p:
             # 启动浏览器
             print("启动浏览器...")
-            browser = await p.chromium.launch(headless=False)  # 设为False可以看到浏览器操作
-            context = await browser.new_context()
+            profile_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.playwright_profile')
+            context = await p.chromium.launch_persistent_context(
+                profile_dir,
+                headless=False,
+            )
             page = await context.new_page()
             # 设置页面超时
             page.set_default_timeout(DOWNLOAD_CONFIG["page_timeout"])
@@ -934,7 +937,7 @@ async def main():
                     logger.error("下载失败")
                     
             finally:
-                await browser.close()
+                await context.close()
                 
     except KeyboardInterrupt:
         msg = "下载被用户取消"

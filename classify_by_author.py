@@ -9,50 +9,56 @@ import os
 import re
 import csv
 import shutil
+import unicodedata
 from pathlib import Path
 from collections import defaultdict
 from typing import Optional, Dict, List, Set
 from difflib import SequenceMatcher
 
-def extract_author_from_filename(filename: str) -> Optional[str]:
+def extract_author_candidates_from_filename(filename: str) -> List[str]:
     """
-    从ZIP文件名中提取作者名
+    从ZIP文件名中提取可能的作者名
     
     Args:
         filename: ZIP文件名
         
     Returns:
-        作者名，如果无法提取则返回None
+        可能的作者名列表
     """
     # 移除文件扩展名
-    name = filename.replace('.zip', '')
+    name = Path(filename).stem.strip()
     
     # 处理以()开头的情况，如: (C101) [タニシ屋 (たにし)]
     if name.startswith('('):
         # 找到第一个)后的内容
         closing_paren = name.find(')')
         if closing_paren != -1:
-            remaining = name[closing_paren + 1:].strip()
-            # 在剩余部分找第一个[]
-            if remaining.startswith('['):
-                end_bracket = remaining.find(']')
-                if end_bracket != -1:
-                    author_part = remaining[1:end_bracket]
-                    # 返回完整的作者信息，保留团体名称
-                    return author_part.strip() if author_part.strip() else None
+            name = name[closing_paren + 1:].strip()
     
-    # 处理直接以[开头的情况
-    elif name.startswith('['):
-        # 第一个[]中的内容一定是作者名
-        first_bracket_end = name.find(']')
-        if first_bracket_end != -1:
-            first_part = name[1:first_bracket_end]  # 第一个[]内的内容
-            return first_part.strip() if first_part.strip() else None
-        
-    
+    candidates = []
+    while name.startswith('['):
+        bracket_end = name.find(']')
+        if bracket_end == -1:
+            break
+
+        candidate = name[1:bracket_end].strip()
+        if candidate:
+            candidates.append(candidate)
+
+        name = name[bracket_end + 1:].strip()
+
+    return candidates
+
+def extract_author_from_filename(filename: str) -> Optional[str]:
+    """
+    从ZIP文件名中提取最可能的作者名
+    """
+    candidates = extract_author_candidates_from_filename(filename)
+    if candidates:
+        return candidates[-1]
     return None
 
-def load_known_authors(csv_path: Path) -> Set[str]:
+def load_known_authors(csv_path: Path) -> List[str]:
     """
     从name.csv文件中加载已知作者列表
     
@@ -60,17 +66,19 @@ def load_known_authors(csv_path: Path) -> Set[str]:
         csv_path: name.csv文件路径
         
     Returns:
-        已知作者名称的集合
+        已知作者名称列表
     """
-    known_authors = set()
+    known_authors = []
+    seen_authors = set()
     
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                author_name = row['Name'].strip()
-                if author_name and author_name != 'other':
-                    known_authors.add(author_name)
+                author_name = normalize_author_name(row['Name'])
+                if author_name and author_name != 'other' and author_name not in seen_authors:
+                    known_authors.append(author_name)
+                    seen_authors.add(author_name)
     except Exception as e:
         print(f"警告: 无法读取name.csv文件: {e}")
     
@@ -106,10 +114,11 @@ def normalize_author_name(author: str) -> str:
         '會': '会',  # 会的繁简变体
     }
     
-    normalized = author
+    normalized = unicodedata.normalize('NFKC', author).strip()
     for variant, standard in char_variants.items():
         normalized = normalized.replace(variant, standard)
     
+    normalized = re.sub(r'\s+', ' ', normalized)
     return normalized
 
  
@@ -124,39 +133,26 @@ def extract_author_variants(author: str) -> List[str]:
     Returns:
         作者名称变体列表
     """
-    variants = [author]  # 原始名称
+    normalized_author = normalize_author_name(author)
+    variants = [normalized_author]  # 原始名称
     
     # 处理汉化组前缀格式：[汉化组][作者] 或 汉化组][作者
-    if '][' in author:
+    if '][' in normalized_author:
         # 提取'][' 后的部分
-        after_group = author.split('][')[-1]
+        after_group = normalized_author.split('][')[-1]
         if after_group:
             variants.append(after_group.strip())
     
     # 如果包含括号，提取括号内外的内容
-    if '(' in author and ')' in author:
+    if '(' in normalized_author and ')' in normalized_author:
         # 提取括号外的部分（通常是社团名）
-        circle_match = re.match(r'^(.+?)\s*\([^)]*\)', author)
+        circle_match = re.match(r'^(.+?)\s*\([^)]*\)', normalized_author)
         if circle_match:
             circle_name = circle_match.group(1).strip()
             variants.append(circle_name)
         
         # 提取括号内的部分（通常是个人作者名）
-        author_match = re.search(r'\(([^)]+)\)', author)
-        if author_match:
-            inner_author = author_match.group(1).strip()
-            variants.append(inner_author)
-    
-    # 如果包含全角括号
-    if '（' in author and '）' in author:
-        # 提取全角括号外的部分
-        circle_match = re.match(r'^(.+?)（[^）]*）', author)
-        if circle_match:
-            circle_name = circle_match.group(1).strip()
-            variants.append(circle_name)
-        
-        # 提取全角括号内的部分
-        author_match = re.search(r'（([^）]+)）', author)
+        author_match = re.search(r'\(([^)]+)\)', normalized_author)
         if author_match:
             inner_author = author_match.group(1).strip()
             variants.append(inner_author)
@@ -169,14 +165,14 @@ def extract_author_variants(author: str) -> List[str]:
     
     return unique_variants
 
-def find_best_author_match(extracted_author: str, known_authors: Set[str], threshold: float = 0.6) -> Optional[str]:
+def find_best_author_match(extracted_author: str, known_authors: List[str], threshold: float = 0.85) -> Optional[str]:
     """
     在已知作者中找到最佳匹配，增强别名匹配能力
     
     Args:
         extracted_author: 从文件名中提取的作者名
-        known_authors: 已知作者集合
-        threshold: 匹配阈值，降低到0.6以处理更多变体
+        known_authors: 已知作者列表
+        threshold: 模糊匹配阈值
         
     Returns:
         最佳匹配的作者名，如果没有找到则返回None
@@ -184,7 +180,6 @@ def find_best_author_match(extracted_author: str, known_authors: Set[str], thres
     best_match = None
     best_score = 0.0
     
-    # 提取所有可能的变体
     extracted_variants = extract_author_variants(extracted_author)
     
     for known_author in known_authors:
@@ -193,40 +188,33 @@ def find_best_author_match(extracted_author: str, known_authors: Set[str], thres
         # 第一轮：精确匹配
         for ext_variant in extracted_variants:
             for known_variant in known_variants:
-                # 直接匹配
                 if ext_variant == known_variant:
-                    return known_author
-                
-                # 标准化后匹配
-                normalized_ext = normalize_author_name(ext_variant)
-                normalized_known = normalize_author_name(known_variant)
-                if normalized_ext == normalized_known:
                     return known_author
         
         # 第二轮：包含关系匹配（特别处理作者别名）
         for ext_variant in extracted_variants:
             for known_variant in known_variants:
-                normalized_ext = normalize_author_name(ext_variant)
-                normalized_known = normalize_author_name(known_variant)
-                
-                # 包含关系匹配（长度限制避免误匹配）
-                if len(normalized_ext) > 2 and len(normalized_known) > 2:
-                    if normalized_ext in normalized_known or normalized_known in normalized_ext:
+                if len(ext_variant) >= 3 and len(known_variant) >= 3:
+                    longer = ext_variant if len(ext_variant) >= len(known_variant) else known_variant
+                    shorter = known_variant if longer == ext_variant else ext_variant
+                    if len(shorter) >= 3 and (longer.startswith(shorter) or longer.endswith(shorter)):
+                        return known_author
+
+                # 中间包含只处理长度足够的明确别名，避免短名误配
+                if len(ext_variant) >= 4 and len(known_variant) >= 4:
+                    if ext_variant in known_variant or known_variant in ext_variant:
                         return known_author
         
         # 第三轮：相似度匹配
         max_similarity = 0.0
         for ext_variant in extracted_variants:
             for known_variant in known_variants:
-                # 计算多种相似度
-                scores = [
-                    similarity(ext_variant, known_variant),
-                    similarity(normalize_author_name(ext_variant), normalize_author_name(known_variant))
-                ]
-                
-                current_max = max(scores)
-                if current_max > max_similarity:
-                    max_similarity = current_max
+                if len(ext_variant) < 4 or len(known_variant) < 4:
+                    continue
+
+                current_similarity = similarity(ext_variant, known_variant)
+                if current_similarity > max_similarity:
+                    max_similarity = current_similarity
         
         # 更新最佳匹配
         if max_similarity > best_score and max_similarity >= threshold:
@@ -235,13 +223,29 @@ def find_best_author_match(extracted_author: str, known_authors: Set[str], thres
     
     return best_match
 
-def group_files_by_author(url_dir: Path, known_authors: Set[str]):
+def find_author_match_from_filename(filename: str, known_authors: List[str]) -> tuple[Optional[str], Optional[str]]:
+    """
+    从文件名中提取候选作者，并返回已知作者匹配结果
+    """
+    candidates = extract_author_candidates_from_filename(filename)
+
+    for candidate in reversed(candidates):
+        matched_author = find_best_author_match(candidate, known_authors)
+        if matched_author:
+            return candidate, matched_author
+
+    if candidates:
+        return candidates[-1], None
+
+    return None, None
+
+def group_files_by_author(url_dir: Path, known_authors: List[str]):
     """
     按作者对文件进行分组
     
     Args:
         url_dir: downloads目录路径
-        known_authors: 已知作者集合
+        known_authors: 已知作者列表
         
     Returns:
         tuple: (已知作者分组, 未知作者分组, 无法识别作者的文件)
@@ -258,11 +262,8 @@ def group_files_by_author(url_dir: Path, known_authors: Set[str]):
     
     # 按作者分组
     for filename in zip_files:
-        author = extract_author_from_filename(filename)
+        author, matched_author = find_author_match_from_filename(filename, known_authors)
         if author:
-            # 尝试匹配已知作者
-            matched_author = find_best_author_match(author, known_authors)
-            
             if matched_author:
                 known_author_groups[matched_author].append(filename)
                 print(f"文件: {filename[:50]}... -> 作者: {author} -> 匹配: {matched_author}")
@@ -509,7 +510,7 @@ def main():
     # 按作者分组文件
     known_author_groups, unknown_author_groups, unclassified = group_files_by_author(url_dir, known_authors)
     
-    if not known_author_groups and not unknown_author_groups:
+    if not known_author_groups and not unknown_author_groups and not unclassified:
         print("没有找到可以分类的文件")
         return
     

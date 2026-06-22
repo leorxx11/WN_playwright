@@ -3,6 +3,7 @@ search_results/
 downloads/
 logs/
 class/
+.playwright_profile/
 
 # Python cache and compiled files
 __pycache__/
