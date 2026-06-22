@@ -97,4 +97,5 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-cookie.jsoncookie_backups/
+cookie.json
+cookie_backups/
