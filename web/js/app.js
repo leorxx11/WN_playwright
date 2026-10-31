@@ -6,6 +6,7 @@ import * as searchPage from './pages/search.js';
 import * as shelfPage from './pages/shelf.js';
 import * as filesPage from './pages/files.js';
 import * as downloadsPage from './pages/downloads.js';
+import * as classifyPage from './pages/classify.js';
 import * as accountPage from './pages/account.js';
 
 const PAGES = [
@@ -13,7 +14,7 @@ const PAGES = [
   { key: 'shelf', label: '书架', module: shelfPage },
   { key: 'files', label: '已导出', module: filesPage },
   { key: 'downloads', label: '下载', module: downloadsPage },
-  { key: 'classify', label: '分类' },
+  { key: 'classify', label: '分类', module: classifyPage },
   { key: 'account', label: '账号', module: accountPage },
 ];
 const DEFAULT_PAGE = 'files';

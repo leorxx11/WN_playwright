@@ -61,3 +61,4 @@
 - `classify_by_author.py` matches zip filenames against `name.csv`; filenames with `[author]` or `(event) [author]` prefixes classify best.
 - When filenames have multiple leading bracket blocks such as `[group][author]`, prefer the block that matches `name.csv`.
 - Files without an author prefix should be treated as unclassified and moved to `class/other` after preview confirmation.
+- The web classify page (`webapp/routes_classify.py`) reuses `plan_classification` / `move_file` from `classify_by_author.py`; it groups author-less files by series name but still defaults them to `other`, and refuses to run while a download is in progress.

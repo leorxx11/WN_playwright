@@ -280,6 +280,86 @@ def group_files_by_author(url_dir: Path, known_authors: List[str]):
     
     return dict(known_author_groups), dict(unknown_author_groups), unclassified
 
+OTHER_FOLDER = "other"
+MIN_FILES_FOR_NEW_AUTHOR = 2
+
+def safe_folder_name(name: str) -> str:
+    """把作者名/系列名转成安全的文件夹名（不含路径分隔符，不会是 . 或 ..）"""
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name).strip()
+    return cleaned.strip('.').strip()
+
+def series_key(filename: str) -> str:
+    """没有作者前缀的文件按作品名归组：去掉括号块和话数，如「玩轉學姊 127-128話[完結]」->「玩轉學姊」"""
+    name = unicodedata.normalize('NFKC', Path(filename).stem)
+    name = re.sub(r'[\[(【][^\])】]*[\])】]', ' ', name)
+    name = re.sub(r'(第\s*)?\d+(\s*[-~～]\s*\d+)?\s*[話话章回卷]?', ' ', name)
+    return re.sub(r'[\s\-_~・.,，、]+', ' ', name).strip()
+
+def plan_classification(url_dir: Path, known_authors: List[str]) -> List[dict]:
+    """
+    生成分类预览（不移动文件）
+
+    Returns:
+        分组列表，每组 {key, kind, label, author, folder, files:[{name, size, author}]}
+        kind: known=已知作者, new=未知作者且≥2本（建文件夹并可加入name.csv）,
+              other=归入other（单本未知作者按作者名分组，没有作者的按作品名分组）
+    """
+    known: Dict[str, List[dict]] = defaultdict(list)
+    unknown: Dict[str, List[dict]] = defaultdict(list)
+    no_author: Dict[str, List[dict]] = defaultdict(list)
+
+    for filename in sorted(f for f in os.listdir(url_dir) if f.endswith('.zip')):
+        author, matched_author = find_author_match_from_filename(filename, known_authors)
+        entry = {"name": filename, "size": (url_dir / filename).stat().st_size, "author": author}
+        if matched_author:
+            known[matched_author].append(entry)
+        elif author:
+            unknown[author].append(entry)
+        else:
+            no_author[series_key(filename)].append(entry)
+
+    groups = [
+        {"key": f"known:{name}", "kind": "known", "label": name, "author": name,
+         "folder": safe_folder_name(name), "files": files}
+        for name, files in sorted(known.items())
+    ]
+    others = []
+    for name, files in sorted(unknown.items()):
+        if len(files) >= MIN_FILES_FOR_NEW_AUTHOR:
+            groups.append({"key": f"new:{name}", "kind": "new", "label": name, "author": name,
+                           "folder": safe_folder_name(name), "files": files})
+        else:
+            others.append({"key": f"other-author:{name}", "kind": "other", "label": name, "author": name,
+                           "folder": OTHER_FOLDER, "files": files})
+    for name, files in no_author.items():
+        others.append({"key": f"other-series:{name}", "kind": "other", "label": name, "author": None,
+                       "folder": OTHER_FOLDER, "files": files})
+    others.sort(key=lambda g: (-len(g["files"]), g["label"]))
+    return groups + others
+
+def move_file(url_dir: Path, class_dir: Path, filename: str, folder: str) -> str:
+    """把 downloads 下的一个zip移到 class/<folder>/，返回 moved / exists / missing"""
+    src_path = url_dir / filename
+    if not src_path.is_file():
+        return "missing"
+    dst_dir = class_dir / folder
+    dst_path = dst_dir / filename
+    if dst_path.exists():
+        return "exists"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src_path), str(dst_path))
+    return "moved"
+
+def list_class_folders(class_dir: Path) -> List[dict]:
+    """class 目录下各文件夹的zip数量"""
+    if not class_dir.is_dir():
+        return []
+    folders = []
+    for entry in sorted(class_dir.iterdir()):
+        if entry.is_dir():
+            folders.append({"name": entry.name, "count": sum(1 for f in entry.iterdir() if f.suffix == '.zip')})
+    return folders
+
 def update_name_csv(csv_path: Path, new_authors: Set[str]) -> bool:
     """
     更新name.csv文件，添加新作者

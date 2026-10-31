@@ -10,7 +10,8 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 from webapp import (
-    common, routes_account, routes_download, routes_files, routes_jobs, routes_search, routes_shelf,
+    common, routes_account, routes_classify, routes_download, routes_files, routes_jobs, routes_search,
+    routes_shelf,
 )
 
 # 封面代理只放行站点图床域名（如 t4.wnimg1.ru / t4.wnimg2.cfd）
@@ -24,6 +25,7 @@ app.include_router(routes_shelf.router)
 app.include_router(routes_jobs.router)
 app.include_router(routes_download.router)
 app.include_router(routes_account.router)
+app.include_router(routes_classify.router)
 
 
 @app.get("/")

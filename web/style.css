@@ -356,6 +356,39 @@ a.pill:hover { filter: brightness(.97); }
 .q-row button { padding: 2px 8px; font-size: 12px; }
 .q-row .badge { text-align: center; }
 .q-empty { color: var(--muted); padding: 16px 2px; }
+/* ---------- 分类页 ---------- */
+.c-groups { max-height: 62vh; }
+.cg { border-bottom: 1px solid var(--line); }
+.cg.off .cg-label, .cg.off .cg-target, .cg.off .badge { opacity: .45; }
+.cg-head {
+  display: grid;
+  grid-template-columns: auto auto 64px minmax(0, 1fr) minmax(160px, 260px) 110px;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 2px;
+}
+.cg-head .badge { text-align: center; }
+.cg-toggle { border: none; background: none; padding: 0 4px; color: var(--muted); cursor: pointer; }
+.cg-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cg-label.unknown { color: var(--muted); }
+.cg-count { color: var(--muted); font-size: 12px; margin-left: 8px; }
+.cg-target { display: flex; align-items: center; gap: 2px; color: var(--muted); font-size: 13px; min-width: 0; }
+.cg-folder { flex: 1; min-width: 0; padding: 3px 6px; font-size: 13px; }
+.cg-extra { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap; }
+.cg-extra button { padding: 2px 8px; font-size: 12px; }
+.cg-csv { display: flex; align-items: center; gap: 4px; color: var(--muted); cursor: pointer; }
+.cg-files { padding: 0 0 6px 30px; }
+.cg-file { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 3px 0; font-size: 13px; cursor: pointer; }
+.cg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cg-size { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.c-folder-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.c-folder { border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 13px; }
+@media (max-width: 760px) {
+  .cg-head { grid-template-columns: auto auto 56px minmax(0, 1fr); }
+  .cg-target { grid-column: 2 / -1; }
+  .cg-extra { grid-column: 2 / -1; }
+  .cg-files { padding-left: 8px; }
+}
 textarea {
   font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text);
