@@ -43,6 +43,8 @@ export WNACG_PASSWORD=your_password
 python config.py  # 自动登录并生成 cookie.json
 ```
 
+`config.py` 会打开与下载脚本共用的 `.playwright_profile/` 浏览器登录；profile 中已有登录态时直接读取 cookie，遇到 Cloudflare 验证请在浏览器中手动完成（最多等待 120 秒）。运行前需先执行 `playwright install chromium`，且不要同时运行下载脚本（profile 会被占用）。
+
 ## 使用方法
 
 **提取书架信息:**
@@ -104,7 +106,7 @@ WN_playwright/
 
 - ✅ 账号信息通过环境变量安全管理
 - ✅ 自动Cookie生成和验证
-- ✅ API 域名：`www.wnacg01.cc`（如有变更请更新 config.py）
+- ✅ API 域名：自动跟随跳转解析，可用 `WNACG_API_DOMAIN` 环境变量覆盖
 - ⚠️ 请适当控制请求频率避免风控
 - 📝 详细日志保存在 `logs/` 目录
 

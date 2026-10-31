@@ -8,7 +8,7 @@ import requests
 from datetime import datetime
 from urllib.parse import urlparse
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import BrowserContext, Locator, Page, sync_playwright
 
 # 加载.env文件中的环境变量
 load_dotenv()
@@ -19,13 +19,33 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 # Cookie文件路径
 COOKIE_FILE = "cookie.json"
 
+# Playwright持久化浏览器目录（与下载脚本共用，保留登录和Cloudflare验证状态）
+PLAYWRIGHT_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.playwright_profile')
+
+# 登录页等待时间(毫秒)：留出手动通过Cloudflare验证的时间
+LOGIN_FORM_WAIT_MS = 120000
+# 提交登录后等待跳转的时间(毫秒)
+LOGIN_RESULT_WAIT_MS = 15000
+
+# 未登录时收藏页的提示文字
+NOT_LOGGED_IN_MARKER = "您沒有權限，需要登錄"
+
 # API域名配置（支持通过环境变量覆盖）
 DEFAULT_API_DOMAIN = "wnacg.com"
 FALLBACK_API_DOMAINS = [
     "wnacg.com",
+    "www.wn10.cfd",
     "www.wn03.cfd",
     "www.wnacg01.cc",
 ]
+
+
+class BrowserSetupError(Exception):
+    """Playwright浏览器无法启动（未安装或profile被占用），不应回退到requests登录"""
+
+
+class LoginCredentialError(Exception):
+    """用户名或密码错误"""
 
 
 def _load_domain_from_cookie_file():
@@ -160,102 +180,147 @@ def get_cookie():
         return cookie
     except Exception as e:
         print(f"自动登录失败: {e}")
-        raise ValueError('无法获取有效的Cookie，请检查登录配置')
+        raise ValueError(f'无法获取有效的Cookie: {e}') from e
 
-def login_and_get_cookie():
-    """自动登录获取cookie（优先使用Playwright完整浏览器流程）"""
+def _launch_login_context(playwright) -> BrowserContext:
+    """启动与下载脚本共用的持久化浏览器，启动失败时给出明确原因"""
+    try:
+        return playwright.chromium.launch_persistent_context(
+            PLAYWRIGHT_PROFILE_DIR,
+            headless=False,
+        )
+    except Exception as e:
+        message = str(e)
+        if "Executable doesn't exist" in message:
+            raise BrowserSetupError(
+                "未安装Playwright Chromium，请运行: playwright install chromium"
+            ) from e
+        if "ProcessSingleton" in message or "already in use" in message:
+            raise BrowserSetupError(
+                f"浏览器profile正被占用，请先关闭正在运行的下载脚本: {PLAYWRIGHT_PROFILE_DIR}"
+            ) from e
+        raise BrowserSetupError(f"Playwright浏览器启动失败: {e}") from e
+
+
+def _is_logged_in(page: Page, domain: str) -> bool:
+    """访问收藏页判断当前浏览器是否已登录"""
+    page.goto(
+        f"https://{domain}/users-users_fav-page-1-c-0.html",
+        timeout=60000,
+        wait_until='domcontentloaded',
+    )
+    if 'users-login' in page.url:
+        return False
+    if page.locator('input[name="login_name"], input[type="password"]').count() > 0:
+        return False
+    content = page.content()
+    # Cloudflare验证页也不包含未登录提示，需要排除
+    if 'challenge-platform' in content or 'cf-chl' in content:
+        return False
+    return NOT_LOGGED_IN_MARKER not in content
+
+
+def _wait_for_login_form(page: Page) -> tuple[Locator, Locator]:
+    """等待登录表单出现；遇到Cloudflare验证时提示在浏览器中手动完成"""
+    username_selector = 'input[name="login_name"], input[name="username"]'
+    password_selector = 'input[name="login_pass"], input[name="password"], input[type="password"]'
+
+    if page.locator(username_selector).count() == 0:
+        print(f"未检测到登录表单，如出现Cloudflare验证请在打开的浏览器中手动完成"
+              f"（最多等待{LOGIN_FORM_WAIT_MS // 1000}秒）...")
+    try:
+        page.wait_for_selector(username_selector, timeout=LOGIN_FORM_WAIT_MS)
+    except Exception as e:
+        raise Exception("未找到登录输入框，当前域名可能不是有效登录页") from e
+
+    return page.locator(username_selector).first, page.locator(password_selector).first
+
+
+def _submit_login_form(page: Page, username: str, password: str) -> None:
+    """填写并提交登录表单，等待页面离开登录页"""
+    username_locator, password_locator = _wait_for_login_form(page)
+    username_locator.fill(username, timeout=10000)
+    password_locator.fill(password, timeout=10000)
+
+    # 触发登录提交（兼容按钮和input提交）
+    submit_selectors = [
+        'button[type="submit"]',
+        'input[type="submit"]',
+        'button:has-text("登錄")',
+        'button:has-text("登录")',
+    ]
+    for selector in submit_selectors:
+        if page.locator(selector).count() > 0:
+            page.locator(selector).first.click()
+            break
+    else:
+        password_locator.press('Enter')
+
+    try:
+        page.wait_for_url(
+            lambda url: 'users-login' not in url and 'check_login' not in url,
+            timeout=LOGIN_RESULT_WAIT_MS,
+        )
+    except Exception:
+        # 部分页面用ajax登录不跳转，交给后续的登录状态检查判断
+        pass
+
+    content = page.content()
+    if any(marker in content for marker in ("登錄失敗", "密碼錯誤", "用戶名或密碼")):
+        raise LoginCredentialError("用户名或密码错误")
+
+
+def _collect_cookie_string(context: BrowserContext, domain: str) -> str:
+    """从浏览器上下文中提取当前站点的cookie字符串"""
+    domain_key = domain.split(':')[0]
+    cookies = context.cookies()
+
+    filtered_pairs = [
+        f"{cookie['name']}={cookie['value']}"
+        for cookie in cookies
+        if domain_key.endswith(cookie.get('domain', '').lstrip('.'))
+    ]
+    if not filtered_pairs:
+        filtered_pairs = [f"{cookie['name']}={cookie['value']}" for cookie in cookies]
+
+    return '; '.join(filtered_pairs)
+
+
+def login_and_get_cookie() -> tuple[str, str]:
+    """自动登录获取cookie（优先使用Playwright持久化浏览器流程）"""
     username, password = get_login_config()
     active_seed_domain = _resolve_active_domain(API_DOMAIN)
 
     print("正在通过Playwright浏览器登录...")
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
-            context = browser.new_context(user_agent=USER_AGENT)
-            page = context.new_page()
-
-            login_url = f"https://{active_seed_domain}/users-login.html"
-            print(f"访问登录页面: {login_url}")
-            page.goto(login_url, timeout=60000, wait_until='domcontentloaded')
-
-            parsed = urlparse(page.url)
-            active_domain = parsed.netloc or API_DOMAIN
-
-            # 填写登录信息（兼容多种表单命名）
-            username_selectors = [
-                'input[name="login_name"]',
-                'input[name="username"]',
-                'input[type="text"]',
-            ]
-            password_selectors = [
-                'input[name="login_pass"]',
-                'input[name="password"]',
-                'input[type="password"]',
-            ]
-
-            username_locator = None
-            for selector in username_selectors:
-                if page.locator(selector).count() > 0:
-                    username_locator = page.locator(selector).first
-                    break
-
-            password_locator = None
-            for selector in password_selectors:
-                if page.locator(selector).count() > 0:
-                    password_locator = page.locator(selector).first
-                    break
-
-            if not username_locator or not password_locator:
-                raise Exception("未找到登录输入框，当前域名可能不是有效登录页")
-
-            username_locator.fill(username, timeout=10000)
-            password_locator.fill(password, timeout=10000)
-
-            # 触发登录提交（兼容按钮和input提交）
-            submit_selectors = [
-                'button[type="submit"]',
-                'input[type="submit"]',
-                'button:has-text("登錄")',
-                'button:has-text("登录")',
-            ]
-            submitted = False
-            for selector in submit_selectors:
-                if page.locator(selector).count() > 0:
-                    page.locator(selector).first.click()
-                    submitted = True
-                    break
-
-            if not submitted:
-                page.keyboard.press('Enter')
-
+            context = _launch_login_context(p)
             try:
-                page.wait_for_load_state('networkidle', timeout=15000)
-            except Exception:
-                page.wait_for_timeout(3000)
+                page = context.pages[0] if context.pages else context.new_page()
 
-            cookies = context.cookies()
-            domain_key = active_domain.split(':')[0]
+                login_url = f"https://{active_seed_domain}/users-login.html"
+                print(f"访问登录页面: {login_url}")
+                page.goto(login_url, timeout=60000, wait_until='domcontentloaded')
+                active_domain = urlparse(page.url).netloc or active_seed_domain
 
-            filtered_pairs = []
-            for cookie in cookies:
-                cookie_domain = cookie.get('domain', '').lstrip('.')
-                if cookie_domain.endswith(domain_key):
-                    filtered_pairs.append(f"{cookie['name']}={cookie['value']}")
+                if _is_logged_in(page, active_domain):
+                    print("浏览器profile中已是登录状态，直接读取cookie")
+                else:
+                    page.goto(login_url, timeout=60000, wait_until='domcontentloaded')
+                    print("正在登录...")
+                    _submit_login_form(page, username, password)
+                    if not _is_logged_in(page, active_domain):
+                        raise Exception("提交登录后仍未登录")
 
-            if not filtered_pairs:
-                filtered_pairs = [f"{cookie['name']}={cookie['value']}" for cookie in cookies]
-
-            cookie_string = '; '.join(filtered_pairs)
-            print(f"获取到cookie: {cookie_string[:100]}{'...' if len(cookie_string) > 100 else ''}")
-
-            browser.close()
-
-            if len(cookie_string) > 50:
+                cookie_string = _collect_cookie_string(context, active_domain)
+                print(f"获取到cookie: {cookie_string[:100]}{'...' if len(cookie_string) > 100 else ''}")
                 print("登录成功，获取到cookie！")
                 return cookie_string, active_domain
+            finally:
+                context.close()
 
-            raise Exception("Playwright登录后未获取到有效cookie")
-
+    except (BrowserSetupError, LoginCredentialError):
+        raise
     except Exception as playwright_error:
         print(f"Playwright登录失败，回退requests方式: {playwright_error}")
         return _login_and_get_cookie_via_requests(username, password)
