@@ -6,6 +6,7 @@ import os
 import json
 import requests
 from datetime import datetime
+from typing import Optional
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from playwright.sync_api import BrowserContext, Locator, Page, sync_playwright
@@ -18,6 +19,8 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 
 # Cookie文件路径
 COOKIE_FILE = "cookie.json"
+# Cookie有效期（秒）
+COOKIE_TTL_SECONDS = 24 * 3600
 
 # Playwright持久化浏览器目录（与下载脚本共用，保留登录和Cloudflare验证状态）
 PLAYWRIGHT_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.playwright_profile')
@@ -143,7 +146,7 @@ def load_cookie_from_file():
                 data = json.load(f)
                 # 检查cookie是否过期（24小时有效期）
                 created_time = datetime.fromisoformat(data['created_at'])
-                if (datetime.now() - created_time).total_seconds() < 24 * 3600:
+                if (datetime.now() - created_time).total_seconds() < COOKIE_TTL_SECONDS:
                     return data['cookie']
                 else:
                     print("Cookie已过期，需要重新获取")
@@ -174,13 +177,49 @@ def get_cookie():
     # 如果没有有效cookie，尝试自动登录获取
     print("没有有效的cookie，尝试自动登录...")
     try:
-        cookie, domain = login_and_get_cookie()
-        API_DOMAIN = domain
-        save_cookie_to_file(cookie, domain)
-        return cookie
+        return refresh_cookie()
     except Exception as e:
         print(f"自动登录失败: {e}")
         raise ValueError(f'无法获取有效的Cookie: {e}') from e
+
+
+def refresh_cookie() -> str:
+    """强制重新登录，保存并返回新cookie"""
+    global API_DOMAIN
+    cookie, domain = login_and_get_cookie()
+    API_DOMAIN = domain
+    save_cookie_to_file(cookie, domain)
+    return cookie
+
+
+def read_cookie_info() -> Optional[dict]:
+    """读取cookie.json的元信息（不打印、不触发登录），文件不存在或损坏时返回None"""
+    if not os.path.exists(COOKIE_FILE):
+        return None
+    try:
+        with open(COOKIE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        created_at = datetime.fromisoformat(data['created_at'])
+    except (json.JSONDecodeError, KeyError, ValueError, OSError):
+        return None
+    age_seconds = (datetime.now() - created_at).total_seconds()
+    return {
+        'created_at': created_at.isoformat(timespec='seconds'),
+        'domain': data.get('domain'),
+        'age_hours': round(age_seconds / 3600, 1),
+        'expired': age_seconds >= COOKIE_TTL_SECONDS,
+    }
+
+
+def verify_cookie(cookie: Optional[str] = None) -> bool:
+    """访问收藏页确认cookie是否仍处于登录状态"""
+    headers = get_request_headers_with_cookie(cookie)
+    response = requests.get(
+        f"https://{API_DOMAIN}/users-users_fav-page-1-c-0.html",
+        headers=headers,
+        timeout=10,
+    )
+    return NOT_LOGGED_IN_MARKER not in response.text
 
 def _launch_login_context(playwright) -> BrowserContext:
     """启动与下载脚本共用的持久化浏览器，启动失败时给出明确原因"""
@@ -424,11 +463,7 @@ if __name__ == "__main__":
         
         # 验证cookie是否有效
         print("\n验证Cookie有效性...")
-        headers = get_request_headers_with_cookie()
-        test_url = f"https://{API_DOMAIN}/users-users_fav-page-1-c-0.html"
-        
-        response = requests.get(test_url, headers=headers, timeout=10)
-        if "您沒有權限，需要登錄" in response.text:
+        if not verify_cookie(cookie):
             print("❌ Cookie验证失败，需要重新登录")
         else:
             print("✅ Cookie验证成功")

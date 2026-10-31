@@ -57,11 +57,16 @@ python get_shelf_info.py
 python search_id.py interactive
 ```
 
-**勾选下载（网页）:**
+**网页界面（推荐）:**
 ```bash
-python select_web.py          # 打开 http://127.0.0.1:8787，端口可用 --port 或 WNACG_WEB_PORT 修改
+python web.py                 # 打开 http://127.0.0.1:8787，端口可用 --port 或 WNACG_WEB_PORT 修改
 ```
-打开 `search_results/` 里导出的书架/搜索 JSON，勾选要下载的漫画：点行切换、按住拖动连续切换、Shift+点击选一段，支持关键词/话数筛选、隐藏已下载、只选未下载，快捷键 `j`/`k`/空格/`a`/`i`/`u`。可以「导出选中为 JSON」（生成 `selected_*.json`，`batch_download.py` 也能选它），或直接「下载选中」并在页面查看每部的进度。下载成功的漫画 ID 记录在 `download_history.json`，用于标记已下载；`batch_download.py` 也会跳过记录里已有的漫画。网页下载时不要同时运行命令行下载脚本（共用 `.playwright_profile/`）。
+顶栏显示登录状态和下载进度。目前可用的页面：
+
+- **已导出**：打开 `search_results/` 里导出的书架/搜索 JSON，勾选要下载的漫画。点行切换、按住拖动连续切换、Shift+点击选一段，支持关键词/话数筛选、隐藏已下载、只选未下载，快捷键 `j`/`k`/空格/`a`/`i`/`u`。可以「导出选中为 JSON」（生成 `selected_*.json`，`batch_download.py` 也能选它），或直接「下载选中」并在页面查看每部的进度。下载成功的漫画 ID 记录在 `download_history.json`，用于标记已下载；`batch_download.py` 也会跳过记录里已有的漫画。网页下载时不要同时运行命令行下载脚本（共用 `.playwright_profile/`）。
+- **账号**：查看用户名、域名、cookie 生成时间，检查登录状态，一键重新登录（正在下载时会等下载结束再登录）。
+
+搜索、书架、下载、分类页面还在做，暂时继续用下面的命令行脚本。
 
 **下载漫画:**
 ```bash
