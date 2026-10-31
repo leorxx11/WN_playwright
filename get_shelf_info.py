@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import dataclass, asdict
-from typing import List
+from typing import Callable, List, Optional
 import json
 import re
 from datetime import datetime
@@ -10,8 +10,9 @@ import aiohttp
 from aiohttp import TCPConnector, ClientTimeout
 from bs4 import BeautifulSoup
 
-# 从配置文件导入
-from config import API_DOMAIN, get_cookie, get_request_headers_with_cookie, DIRECTORIES
+# 从配置文件导入（域名登录后可能变化，用 config.API_DOMAIN 动态读取）
+import config
+from config import get_cookie, get_request_headers_with_cookie, DIRECTORIES
 
 @dataclass
 class Shelf:
@@ -34,7 +35,7 @@ class GetFavoriteResult:
     shelf: Shelf
 
 async def get_favorite(session: aiohttp.ClientSession, cookie: str, shelf_id: int, page_num: int, retry: int = 3) -> GetFavoriteResult:
-    url = f"https://{API_DOMAIN}/users-users_fav-page-{page_num}-c-{shelf_id}.html"
+    url = f"https://{config.API_DOMAIN}/users-users_fav-page-{page_num}-c-{shelf_id}.html"
     headers = get_request_headers_with_cookie(cookie)
     
     for attempt in range(retry):
@@ -98,7 +99,7 @@ def parse_shelf(a):
 
 async def get_shelves(session: aiohttp.ClientSession, cookie: str, retry: int = 3) -> List[Shelf]:
     """获取所有书架列表"""
-    url = f"https://{API_DOMAIN}/users-users_fav-page-1-c-0.html"
+    url = f"https://{config.API_DOMAIN}/users-users_fav-page-1-c-0.html"
     headers = get_request_headers_with_cookie(cookie)
     
     for attempt in range(retry):
@@ -117,39 +118,72 @@ async def get_shelves(session: aiohttp.ClientSession, cookie: str, retry: int = 
             return shelves
         except (aiohttp.ClientConnectorError, asyncio.TimeoutError) as e:
             if attempt == retry - 1:
-                raise RuntimeError(f"无法连接到 {API_DOMAIN}，请检查:\n"
-                                 f"1. 域名是否正确 (当前: {API_DOMAIN})\n"
+                raise RuntimeError(f"无法连接到 {config.API_DOMAIN}，请检查:\n"
+                                 f"1. 域名是否正确 (当前: {config.API_DOMAIN})\n"
                                  f"2. 网络连接是否正常\n"
                                  f"3. 是否需要配置代理\n"
                                  f"原始错误: {e}")
             print(f"连接失败 (尝试 {attempt + 1}/{retry}), 3秒后重试...")
             await asyncio.sleep(3)
 
-async def get_all_comics_from_shelf(session: aiohttp.ClientSession, cookie: str, shelf_id: int) -> List[ComicInFavorite]:
-    """获取指定书架的所有书籍（所有分页）"""
+async def get_all_comics_from_shelf(
+    session: aiohttp.ClientSession,
+    cookie: str,
+    shelf_id: int,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+) -> List[ComicInFavorite]:
+    """获取指定书架的所有书籍（所有分页）；on_progress(已完成页数, 总页数)"""
     all_comics = []
     
     # 先获取第一页来确定总页数
     first_page_result = await get_favorite(session, cookie, shelf_id, 1)
     all_comics.extend(first_page_result.comics)
     total_pages = first_page_result.total_page
+    done_pages = 1
+    if on_progress:
+        on_progress(done_pages, total_pages)
     
     print(f"书架 '{first_page_result.shelf.name}' 共有 {total_pages} 页")
     
     # 获取剩余页面
     if total_pages > 1:
-        tasks = []
-        for page in range(2, total_pages + 1):
-            task = get_favorite(session, cookie, shelf_id, page)
-            tasks.append(task)
-        
+        async def fetch_page(page: int) -> GetFavoriteResult:
+            nonlocal done_pages
+            result = await get_favorite(session, cookie, shelf_id, page)
+            done_pages += 1
+            if on_progress:
+                on_progress(done_pages, total_pages)
+            return result
+
         print(f"正在获取第 2-{total_pages} 页...")
-        results = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*[fetch_page(page) for page in range(2, total_pages + 1)])
         
         for result in results:
             all_comics.extend(result.comics)
     
     return all_comics
+
+
+def build_shelf_export(comics: List[dict], shelf_id: int) -> dict:
+    """把书架漫画组装成导出JSON结构（网页导出也用它）"""
+    shelf_name = comics[0]['shelf']['name'] if comics else "empty"
+    return {
+        "comics": comics,
+        "total_comics": len(comics),
+        "shelf_metadata": {
+            "shelf_id": shelf_id,
+            "shelf_name": shelf_name,
+            "export_time": datetime.now().isoformat(),
+            "source": "shelf_info"
+        }
+    }
+
+
+def shelf_export_filename(shelf_name: str) -> str:
+    """导出文件名：shelf_<书架名>_<时间>.json"""
+    safe_shelf_name = re.sub(r'[<>:"/\\|?*]', '_', shelf_name)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"shelf_{safe_shelf_name}_{timestamp}.json"
 
 async def main(cookie: str, shelf_id: int = None):
     # 配置连接参数，使用系统代理
@@ -201,27 +235,14 @@ async def main(cookie: str, shelf_id: int = None):
         all_comics = await get_all_comics_from_shelf(session, cookie, shelf_id)
         
         # 构造结果
-        result = {
-            "comics": [asdict(comic) for comic in all_comics],
-            "total_comics": len(all_comics),
-            "shelf_metadata": {
-                "shelf_id": shelf_id,
-                "shelf_name": all_comics[0].shelf.name if all_comics else "empty",
-                "export_time": datetime.now().isoformat(),
-                "source": "shelf_info"
-            }
-        }
+        result = build_shelf_export([asdict(comic) for comic in all_comics], shelf_id)
         
         # 创建search_results目录（与搜索结果统一）
         save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIRECTORIES['search_results'])
         os.makedirs(save_dir, exist_ok=True)
         
         # 保存到文件
-        shelf_name = all_comics[0].shelf.name if all_comics else "empty"
-        # 替换文件名中的非法字符
-        safe_shelf_name = re.sub(r'[<>:"/\\|?*]', '_', shelf_name)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"shelf_{safe_shelf_name}_{timestamp}.json"
+        filename = shelf_export_filename(result["shelf_metadata"]["shelf_name"])
         filepath = os.path.join(save_dir, filename)
         
         with open(filepath, 'w', encoding='utf-8') as f:

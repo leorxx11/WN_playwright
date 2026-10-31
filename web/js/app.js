@@ -2,12 +2,14 @@
 
 import { escapeHtml } from './util.js';
 import { accountSummary, onAccount, onJob, pollJob, refreshAccount, verifyAccount } from './status.js';
+import * as searchPage from './pages/search.js';
+import * as shelfPage from './pages/shelf.js';
 import * as filesPage from './pages/files.js';
 import * as accountPage from './pages/account.js';
 
 const PAGES = [
-  { key: 'search', label: '搜索' },
-  { key: 'shelf', label: '书架' },
+  { key: 'search', label: '搜索', module: searchPage },
+  { key: 'shelf', label: '书架', module: shelfPage },
   { key: 'files', label: '已导出', module: filesPage },
   { key: 'downloads', label: '下载' },
   { key: 'classify', label: '分类' },

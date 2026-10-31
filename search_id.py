@@ -9,9 +9,10 @@ import json
 from datetime import datetime
 import os
 
-# 从配置文件导入
+# 从配置文件导入（域名登录后可能变化，用 config.API_DOMAIN 动态读取）
+import config
 from config import (
-    API_DOMAIN, get_request_headers_with_cookie, REQUEST_CONFIG, SEARCH_CONFIG,
+    get_request_headers_with_cookie, REQUEST_CONFIG, SEARCH_CONFIG,
     DIRECTORIES
 )
 
@@ -81,14 +82,14 @@ def parse_search_result(html, is_tag=False):
         "is_search_by_tag": is_tag,
     }
 
-def make_request(url, params=None, max_retries=None):
-    """发送HTTP请求，包含重试机制"""
+def make_request(url, params=None, max_retries=None, cookie=None):
+    """发送HTTP请求，包含重试机制；cookie为空时自动获取"""
     if max_retries is None:
         max_retries = REQUEST_CONFIG['max_retries']
     
     # 部分漫画只对登录用户可见，未带cookie时搜索会返回空结果
     try:
-        headers = get_request_headers_with_cookie()
+        headers = get_request_headers_with_cookie(cookie)
     except ValueError as e:
         raise SearchError(f"获取Cookie失败: {e}")
     timeout = REQUEST_CONFIG['timeout']
@@ -104,7 +105,7 @@ def make_request(url, params=None, max_retries=None):
             print(f"请求失败，{2**attempt}秒后重试... ({attempt + 1}/{max_retries})")
             time.sleep(2**attempt)
 
-def search_by_keyword(keyword, page_num=1):
+def search_by_keyword(keyword, page_num=1, cookie=None):
     """根据关键词搜索"""
     params = {
         "q": keyword,
@@ -113,15 +114,15 @@ def search_by_keyword(keyword, page_num=1):
         "s": "create_time_DESC",
         "p": page_num,
     }
-    url = f"https://{API_DOMAIN}/search/index.php"
-    resp = make_request(url, params=params)
+    url = f"https://{config.API_DOMAIN}/search/index.php"
+    resp = make_request(url, params=params, cookie=cookie)
     return parse_search_result(resp.text, is_tag=False)
 
-def search_by_tag(tag_name, page_num=1):
+def search_by_tag(tag_name, page_num=1, cookie=None):
     """根据标签搜索"""
     encoded_tag = quote(tag_name, safe='')
-    url = f"https://{API_DOMAIN}/albums-index-page-{page_num}-tag-{encoded_tag}.html"
-    resp = make_request(url)
+    url = f"https://{config.API_DOMAIN}/albums-index-page-{page_num}-tag-{encoded_tag}.html"
+    resp = make_request(url, cookie=cookie)
     return parse_search_result(resp.text, is_tag=True)
 
 def normalize_title(title):
@@ -400,21 +401,7 @@ def save_grouped_results(comics, query, save_format='json'):
         filename = f"search_{clean_query}_all_{timestamp}.json"
         filepath = os.path.join(save_dir, filename)
         
-        # 转换为统一格式
-        converted_comics = [convert_search_result_to_shelf_format(comic, query) for comic in comics]
-        
-        save_data = {
-            'comics': converted_comics,
-            'total_comics': len(converted_comics),
-            'search_metadata': {
-                'search_query': query,
-                'search_time': datetime.now().isoformat(),
-                'manga_groups': {name: len(group) for name, group in manga_groups.items()},
-                'search_type': 'all'
-            }
-        }
-        
-        success = save_results_to_json(save_data, filepath)
+        success = save_results_to_json(build_search_export(comics, query), filepath)
         if success:
             saved_files.append(filepath)
     
@@ -428,6 +415,21 @@ def save_grouped_results(comics, query, save_format='json'):
     print("可使用get_url.py自动扫描该目录并选择文件获取下载链接")
     
     return len(saved_files) > 0
+
+def build_search_export(comics, query):
+    """把搜索结果组装成与书架统一的JSON结构（网页保存也用它）"""
+    converted_comics = [convert_search_result_to_shelf_format(comic, query) for comic in comics]
+    manga_groups = group_results_by_manga_name(comics)
+    return {
+        'comics': converted_comics,
+        'total_comics': len(converted_comics),
+        'search_metadata': {
+            'search_query': query,
+            'search_time': datetime.now().isoformat(),
+            'manga_groups': {name: len(group) for name, group in manga_groups.items()},
+            'search_type': 'all'
+        }
+    }
 
 def ask_save_results(comics, query):
     """询问是否保存结果"""

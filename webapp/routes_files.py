@@ -22,6 +22,15 @@ class IdsBody(BaseModel):
     ids: List[int]
 
 
+class FlagItem(BaseModel):
+    id: int
+    title: str = ""
+
+
+class FlagsBody(BaseModel):
+    items: List[FlagItem]
+
+
 def _json_path(name: str) -> str:
     """校验文件名并返回search_results下的绝对路径"""
     if not JSON_NAME_RE.match(name):
@@ -69,10 +78,16 @@ def _chapter_range(title: str) -> tuple[Optional[int], Optional[int]]:
     return parts[0], parts[-1]
 
 
-def to_list_items(raw_comics: List[dict]) -> List[dict]:
-    """把漫画数据转成前端列表需要的格式，附带已下载标记（搜索、书架页也会用）"""
+def downloaded_checker():
+    """返回判断是否已下载的函数：下载记录里有ID，或本地有同名zip"""
     history = downloaded_ids()
     local_keys = scan_local_zip_keys()
+    return lambda comic_id, title: comic_id in history or title_key(title) in local_keys
+
+
+def to_list_items(raw_comics: List[dict]) -> List[dict]:
+    """把漫画数据转成前端列表需要的格式，附带已下载标记（搜索、书架页也会用）"""
+    is_downloaded = downloaded_checker()
 
     items = []
     for comic in raw_comics:
@@ -88,7 +103,7 @@ def to_list_items(raw_comics: List[dict]) -> List[dict]:
             "info": _comic_info(comic),
             "chapter_start": chapter_start,
             "chapter_end": chapter_end,
-            "downloaded": comic_id in history or title_key(title) in local_keys,
+            "downloaded": is_downloaded(comic_id, title),
         })
     return items
 
@@ -153,3 +168,13 @@ def export_selection(name: str, body: IdsBody) -> dict:
     with open(os.path.join(common.SEARCH_DIR, out_name), 'w', encoding='utf-8') as f:
         json.dump(exported, f, ensure_ascii=False, indent=2)
     return {"name": out_name, "count": len(comics)}
+
+
+flags_router = APIRouter(prefix="/api/downloaded")
+
+
+@flags_router.post("")
+def downloaded_flags(body: FlagsBody) -> dict:
+    """批量查询是否已下载，下载结束后前端用它刷新标记"""
+    is_downloaded = downloaded_checker()
+    return {str(item.id): is_downloaded(item.id, item.title) for item in body.items}

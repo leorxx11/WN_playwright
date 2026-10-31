@@ -6,7 +6,11 @@ export async function api(path, options = {}) {
     ...options,
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.detail || `请求失败 (${resp.status})`);
+  if (!resp.ok) {
+    const err = new Error(data.detail || `请求失败 (${resp.status})`);
+    err.status = resp.status;   // 401 表示需要去账号页重新登录
+    throw err;
+  }
   return data;
 }
 

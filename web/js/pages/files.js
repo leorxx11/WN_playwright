@@ -1,7 +1,6 @@
 // 已导出：打开 search_results/ 里的 JSON，勾选后下载或导出
 
 import { api, escapeHtml, storageGet, storageSet, toast } from '../util.js';
-import { onJob } from '../status.js';
 import { createComicList } from '../comic-list.js';
 
 const KIND_NAME = { shelf: '书架', search: '搜索', selected: '勾选' };
@@ -71,15 +70,6 @@ export function mount(page) {
     if (li) openFile(li.dataset.name);
   });
 
-  // 下载结束后刷新已下载标记
-  const offJob = onJob((job, prev) => {
-    if (current && prev && prev.running && !job.running) {
-      api(`/api/files/${encodeURIComponent(current)}`)
-        .then((data) => list.updateItems(data.comics))
-        .catch(() => { /* 下次打开文件时会刷新 */ });
-    }
-  });
-
   (async () => {
     await loadFiles();
     const last = storageGet('wn.file');
@@ -87,8 +77,5 @@ export function mount(page) {
     if (initial) await openFile(initial.name);
   })();
 
-  return () => {
-    offJob();
-    list.destroy();
-  };
+  return () => list.destroy();
 }

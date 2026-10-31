@@ -4,10 +4,13 @@
 //   list.setItems(comics)        替换列表并清空勾选
 //   list.updateItems(comics)     按id更新已下载等字段，保留勾选
 //   list.selectedItems()         按列表顺序返回勾选的漫画
+//   list.refreshDownloaded()     重新查询已下载标记
+//   list.clear(text)             清空列表并显示提示
 //   list.destroy()               页面卸载时调用
-// actions: [{ label: (n) => string, primary, onClick: (items) => void }]，需要有勾选才可点
+// actions: [{ label: (n) => string, primary, onClick: (items) => void, whole }]
+//   默认需要有勾选才可点；whole: true 表示作用于整个列表，列表非空即可点
 
-import { escapeHtml, normalize, storageGet, storageSet, toast } from './util.js';
+import { api, escapeHtml, normalize, storageGet, storageSet, toast } from './util.js';
 import { jobStatusMap, onJob, startDownload, status as globalStatus, stopDownload } from './status.js';
 
 const STATUS_LABEL = {
@@ -15,7 +18,7 @@ const STATUS_LABEL = {
   skipped: '已存在', failed: '失败', cancelled: '未下载',
 };
 
-export function createComicList(host, { actions = [], emptyText = '没有漫画' } = {}) {
+export function createComicList(host, { actions = [], emptyText = '没有漫画', noItemsText = '列表是空的' } = {}) {
   host.innerHTML = `
     <div class="cl">
       <div class="cl-toolbar">
@@ -182,7 +185,7 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
     if (!state.loaded) {
       listEl.innerHTML = `<div class="cl-empty">${escapeHtml(emptyText)}</div>`;
     } else if (!state.items.length) {
-      listEl.innerHTML = '<div class="cl-empty">列表是空的</div>';
+      listEl.innerHTML = `<div class="cl-empty">${escapeHtml(noItemsText)}</div>`;
     } else if (!state.visible.length) {
       listEl.innerHTML = '<div class="cl-empty">没有符合筛选条件的漫画</div>';
     } else {
@@ -221,7 +224,9 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
       } else if (action.key === 'download') {
         btn.disabled = !sel || running;
         btn.title = running ? '已有下载任务在运行' : '';
-      } else if (!action.always) {
+      } else if (action.whole) {
+        btn.disabled = !state.items.length;
+      } else {
         btn.disabled = !sel;
       }
     });
@@ -375,7 +380,19 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
 
   /* ---------- 下载状态 ---------- */
 
-  const offJob = onJob(() => {
+  async function refreshDownloaded() {
+    if (!state.items.length) return;
+    try {
+      const flags = await api('/api/downloaded', {
+        method: 'POST',
+        body: JSON.stringify({ items: state.items.map((c) => ({ id: c.id, title: c.title })) }),
+      });
+      updateItems(state.items.map((c) => ({ id: c.id, downloaded: !!flags[c.id] })));
+    } catch { /* 下次加载列表时会刷新 */ }
+  }
+
+  const offJob = onJob((job, prev) => {
+    if (prev && prev.running && !job.running) refreshDownloaded();
     state.jobStatus = jobStatusMap();
     // 只更新状态徽标，不重绘整个列表
     for (const id of state.visible) {
@@ -427,5 +444,5 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
   }
 
   renderList();
-  return { setItems, updateItems, selectedItems, clear, destroy };
+  return { setItems, updateItems, selectedItems, refreshDownloaded, clear, destroy };
 }
