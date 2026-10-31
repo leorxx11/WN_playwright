@@ -1,6 +1,6 @@
-// 下载：队列管理、按ID/网址添加、最近下载记录
+// 下载：队列管理、按ID/网址添加
 
-import { api, escapeHtml, toast } from '../util.js';
+import { escapeHtml, toast } from '../util.js';
 import { onJob, queueAction, startDownload, status, stopDownload } from '../status.js';
 
 const STATUS_LABEL = {
@@ -49,25 +49,14 @@ export function mount(page) {
           <button data-act="add" class="primary" disabled>加入队列</button>
         </div>
       </div>
-      <div class="card">
-        <div class="card-head"><h2>最近下载</h2><button data-act="history">刷新</button></div>
-        <div class="h-list q-list"></div>
-      </div>
     </div>`;
 
   const $ = (sel) => page.querySelector(sel);
   const summaryEl = $('.q-summary');
   const queueEl = page.querySelector('.q-list');
-  const historyEl = $('.h-list');
   const textEl = $('textarea');
   const noteEl = $('.note');
   const btn = (act) => page.querySelector(`[data-act="${act}"]`);
-
-  let historyTitles = new Map();   // 记录里的标题，用来补全队列中未知标题
-
-  function titleOf(item) {
-    return item.title || historyTitles.get(item.id) || '';
-  }
 
   function renderQueue(job) {
     const items = job ? job.items : [];
@@ -96,7 +85,7 @@ export function mount(page) {
       return;
     }
     queueEl.innerHTML = items.map((item) => {
-      const title = titleOf(item);
+      const title = item.title;
       let action = '';
       if (item.status === 'failed' || item.status === 'cancelled') {
         action = `<button data-retry="${item.id}">重试</button> <button data-remove="${item.id}">移除</button>`;
@@ -114,23 +103,6 @@ export function mount(page) {
     }).join('');
   }
 
-  async function loadHistory() {
-    try {
-      const records = await api('/api/download/history?limit=100');
-      historyTitles = new Map(records.filter((r) => r.title).map((r) => [r.id, r.title]));
-      historyEl.innerHTML = records.map((r) => `
-        <div class="q-row">
-          <span class="badge s-done">完成</span>
-          <span class="q-id">#${r.id}</span>
-          <span class="q-title${r.title ? '' : ' unknown'}" title="${escapeHtml(r.title)}">${escapeHtml(r.title || '标题未知')}</span>
-          <span class="q-time">${shortTime(r.downloaded_at)}</span>
-        </div>`).join('') || '<div class="q-empty">还没有下载记录</div>';
-      renderQueue(status.job);
-    } catch (err) {
-      historyEl.innerHTML = `<div class="q-empty">${escapeHtml(err.message)}</div>`;
-    }
-  }
-
   async function run(action, body, done) {
     try {
       const res = await queueAction(action, body);
@@ -144,7 +116,6 @@ export function mount(page) {
   btn('stop').addEventListener('click', () => stopDownload().catch((err) => toast(err.message)));
   btn('retry').addEventListener('click', () => run('retry', {}, (res) => toast(`已重新排队 ${res.retried} 部`)));
   btn('clear').addEventListener('click', () => run('clear', {}, (res) => toast(`已清除 ${res.cleared} 条`)));
-  btn('history').addEventListener('click', loadHistory);
 
   queueEl.addEventListener('click', (e) => {
     const retry = e.target.closest('[data-retry]');
@@ -163,7 +134,7 @@ export function mount(page) {
     const ids = parseIds(textEl.value);
     if (!ids.length) return;
     try {
-      const added = await startDownload(ids.map((id) => ({ id, title: historyTitles.get(id) || '' })));
+      const added = await startDownload(ids.map((id) => ({ id, title: '' })));
       const skipped = ids.length - added;
       toast(`已加入下载队列 ${added} 部${skipped ? `（${skipped} 部已在队列中）` : ''}`);
       textEl.value = '';
@@ -174,12 +145,8 @@ export function mount(page) {
     }
   });
 
-  const offJob = onJob((job, prev) => {
-    renderQueue(job);
-    if (prev && prev.running && !job.running) loadHistory();
-  });
+  const offJob = onJob(renderQueue);
 
   renderQueue(status.job);
-  loadHistory();
   return offJob;
 }

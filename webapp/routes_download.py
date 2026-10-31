@@ -1,10 +1,9 @@
-"""下载队列：加入、开始/暂停、重试、移除，以及最近下载记录"""
+"""下载队列：加入、开始/暂停、重试、移除、清除"""
 from typing import List, Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from download_history import load_history
 from webapp.browser_worker import worker
 
 router = APIRouter(prefix="/api/download")
@@ -70,14 +69,3 @@ async def clear_finished() -> dict:
     cleared = worker.download.clear_finished()
     return _snapshot(cleared=cleared)
 
-
-@router.get("/history")
-def download_history(limit: int = 50) -> List[dict]:
-    """最近下载成功的漫画，最新的在前"""
-    records = [
-        {"id": int(key), "title": value.get("title", ""), "downloaded_at": value.get("downloaded_at", "")}
-        for key, value in load_history().items()
-        if key.isdigit() and isinstance(value, dict)
-    ]
-    records.sort(key=lambda r: r["downloaded_at"], reverse=True)
-    return records[:max(1, min(limit, 500))]
