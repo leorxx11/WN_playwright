@@ -74,7 +74,7 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
     { key: 'selectFailed', label: () => '勾选失败项', onClick: selectFailed, always: true },
     { key: 'stop', label: () => '停止下载', onClick: () => stopDownload().catch((e) => toast(e.message)), always: true },
     ...actions,
-    { key: 'download', label: (n) => `下载选中 (${n})`, primary: true, onClick: downloadSelected },
+    { key: 'download', label: (n) => (globalStatus.job && globalStatus.job.running ? `加入下载 (${n})` : `下载选中 (${n})`), primary: true, onClick: downloadSelected },
   ];
   $('.cl-actions').innerHTML = builtinActions
     .map((a, i) => `<button data-action="${i}" class="${a.primary ? 'primary' : ''}"></button>`).join('');
@@ -91,9 +91,15 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
     const visibleSet = new Set(state.visible);
     const hidden = items.filter((c) => !visibleSet.has(c.id)).length;
     const note = hidden ? `\n其中 ${hidden} 部被筛选隐藏，也会一起下载。` : '';
-    if (!confirm(`开始下载 ${items.length} 部？下载时会打开浏览器窗口。${note}`)) return;
+    const running = !!(globalStatus.job && globalStatus.job.running);
+    const question = running
+      ? `把 ${items.length} 部加入下载队列？会排在当前任务后面。${note}`
+      : `开始下载 ${items.length} 部？下载时会打开浏览器窗口。${note}`;
+    if (!confirm(question)) return;
     try {
-      await startDownload(items.map((c) => ({ id: c.id, title: c.title })));
+      const added = await startDownload(items.map((c) => ({ id: c.id, title: c.title })));
+      const skipped = items.length - added;
+      toast(`已加入下载队列 ${added} 部${skipped ? `（${skipped} 部已在队列中）` : ''}`);
     } catch (err) {
       toast(err.message);
     }
@@ -222,8 +228,7 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
         btn.hidden = !running;
         btn.disabled = !!(job && job.stop_requested);
       } else if (action.key === 'download') {
-        btn.disabled = !sel || running;
-        btn.title = running ? '已有下载任务在运行' : '';
+        btn.disabled = !sel;
       } else if (action.whole) {
         btn.disabled = !state.items.length;
       } else {

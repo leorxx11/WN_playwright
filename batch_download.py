@@ -10,7 +10,7 @@ import glob
 import logging
 import re
 import random
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Sized
 from datetime import datetime
 
 from playwright.async_api import async_playwright
@@ -56,8 +56,11 @@ class BatchDownloadManager:
         progress_percent = (self.current_index / self.total_comics * 100) if self.total_comics > 0 else 0
         elapsed = datetime.now() - self.start_time if self.start_time else 0
         
-        # 终端只显示简要信息 - 只显示ID，不显示标题
-        print(f"[{self.current_index}/{self.total_comics}] ({progress_percent:.1f}%) 下载: [{comic_id}]")
+        # 终端只显示简要信息 - 只显示ID，不显示标题（总数未知时只显示序号）
+        if self.total_comics > 0:
+            print(f"[{self.current_index}/{self.total_comics}] ({progress_percent:.1f}%) 下载: [{comic_id}]")
+        else:
+            print(f"[{self.current_index}] 下载: [{comic_id}]")
         
         # 详细信息记录到日志
         self.logger.info(f"Progress: {self.current_index}/{self.total_comics} ({progress_percent:.1f}%)")
@@ -192,17 +195,20 @@ class BatchDownloadError(Exception):
 
 
 async def download_comic_list(
-    comics: List[Dict],
+    comics: Iterable[Dict],
     logger,
     on_status: Optional[Callable[[int, str], None]] = None,
     should_stop: Optional[Callable[[], bool]] = None,
     skip_downloaded: bool = True,
+    has_more: Optional[Callable[[], bool]] = None,
 ) -> BatchDownloadManager:
     """按顺序下载漫画列表（命令行和网页共用）
 
+    comics: 列表，或边下载边追加的生成器（网页下载队列）
     on_status(comic_id, status): status 取值 downloading / done / skipped / failed
     should_stop(): 返回True时不再开始下一部
     skip_downloaded: 跳过下载记录中已有的漫画
+    has_more(): comics为生成器时用来判断后面是否还有，决定是否等待间隔
     """
     def report(comic_id: int, status: str) -> None:
         if on_status:
@@ -215,11 +221,16 @@ async def download_comic_list(
 
     # 初始化下载管理器
     manager = BatchDownloadManager(logger)
-    manager.total_comics = len(comics)
+    manager.total_comics = len(comics) if isinstance(comics, Sized) else 0
     manager.start_time = datetime.now()
 
-    print(f"🚀 开始批量下载 {len(comics)} 部漫画")
-    logger.info(f"Starting batch download of {len(comics)} comics")
+    def more_after(index: int) -> bool:
+        if has_more is not None:
+            return has_more()
+        return index < manager.total_comics - 1
+
+    print(f"🚀 开始批量下载 {manager.total_comics or ''} 部漫画")
+    logger.info(f"Starting batch download of {manager.total_comics or 'queued'} comics")
 
     async with async_playwright() as p:
         profile_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.playwright_profile')
@@ -252,7 +263,7 @@ async def download_comic_list(
 
                 manager.current_index = i + 1
                 comic_id = comic.get('id')
-                comic_title = comic.get('title', f'Comic_{comic_id}')
+                comic_title = comic.get('title') or f'Comic_{comic_id}'
 
                 # 打印进度
                 manager.print_progress(comic_title, comic_id)
@@ -281,7 +292,7 @@ async def download_comic_list(
 
                     # 下载漫画
                     logger.info(f"Starting download: [{comic_id}] {comic_title}")
-                    success = await download_comic(page, comic_id)
+                    success = await download_comic(page, comic_id, title=comic.get('title', ''))
 
                     if success:
                         print(f"✅ 成功")
@@ -295,7 +306,7 @@ async def download_comic_list(
                         report(comic_id, 'failed')
 
                     # 在每次下载后等待一段时间，避免过于频繁的请求
-                    if i < len(comics) - 1 and not stop_requested():
+                    if more_after(i) and not stop_requested():
                         wait_time = random.randint(1, 5)
                         print(f"等待{wait_time}秒...")
                         logger.info(f"Waiting {wait_time} seconds before next download...")

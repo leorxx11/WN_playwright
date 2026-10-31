@@ -5,13 +5,14 @@ import { accountSummary, onAccount, onJob, pollJob, refreshAccount, verifyAccoun
 import * as searchPage from './pages/search.js';
 import * as shelfPage from './pages/shelf.js';
 import * as filesPage from './pages/files.js';
+import * as downloadsPage from './pages/downloads.js';
 import * as accountPage from './pages/account.js';
 
 const PAGES = [
   { key: 'search', label: '搜索', module: searchPage },
   { key: 'shelf', label: '书架', module: shelfPage },
   { key: 'files', label: '已导出', module: filesPage },
-  { key: 'downloads', label: '下载' },
+  { key: 'downloads', label: '下载', module: downloadsPage },
   { key: 'classify', label: '分类' },
   { key: 'account', label: '账号', module: accountPage },
 ];
@@ -61,9 +62,10 @@ onJob((job) => {
   const c = job.counts || {};
   const finished = (c.done || 0) + (c.skipped || 0) + (c.failed || 0);
   const current = job.items.find((i) => i.status === 'downloading');
-  const text = job.running
-    ? `下载中 ${finished}/${total}${current ? ` · #${current.id}` : ''}`
-    : `上次下载：成功 ${(c.done || 0) + (c.skipped || 0)} · 失败 ${c.failed || 0}`;
+  let text;
+  if (job.running) text = `下载中 ${finished}/${total}${current ? ` · #${current.id}` : ''}`;
+  else if (job.pending) text = `待下载 ${job.pending} 部`;
+  else text = `上次下载：成功 ${(c.done || 0) + (c.skipped || 0)} · 失败 ${c.failed || 0}`;
   jobPill.hidden = false;
   jobPill.title = job.message || '';
   jobPill.innerHTML = `<span class="text">${escapeHtml(text)}</span>`
@@ -72,4 +74,8 @@ onJob((job) => {
 
 route();
 pollJob();
+// 切回页面时同步一次队列（可能在别的标签页里改过）
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') pollJob();
+});
 refreshAccount().then(() => verifyAccount().catch(() => { /* 顶栏保持 cookie 状态即可 */ }));

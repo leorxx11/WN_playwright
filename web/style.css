@@ -332,3 +332,45 @@ a.pill:hover { filter: brightness(.97); }
 .subnav .subnav-head button { padding: 2px 8px; font-size: 12px; }
 .subnav .s-empty { color: var(--muted); font-size: 13px; padding: 8px 14px; }
 .subnav .s-empty a { color: var(--accent); }
+
+/* ---------- 下载页 ---------- */
+.cards.wide { max-width: 960px; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.card-head h2 { margin: 0; }
+.q-summary { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.q-summary .bar { height: 4px; background: var(--hover); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.q-summary .bar > div { height: 100%; background: var(--accent); transition: width .3s; }
+.q-list { border-top: 1px solid var(--line); max-height: 50vh; overflow-y: auto; }
+.q-row {
+  display: grid;
+  grid-template-columns: 64px 74px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.q-row .q-id { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
+.q-row .q-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-row .q-title.unknown { color: var(--muted); }
+.q-row .q-time { color: var(--muted); font-size: 12px; margin-left: 8px; }
+.q-row button { padding: 2px 8px; font-size: 12px; }
+.q-row .badge { text-align: center; }
+.q-empty { color: var(--muted); padding: 16px 2px; }
+textarea {
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  width: 100%;
+  resize: vertical;
+  margin-bottom: 10px;
+}
+textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.card .actions .note { color: var(--muted); font-size: 13px; align-self: center; margin-right: auto; }
+@media (max-width: 760px) {
+  .q-row { grid-template-columns: 52px auto minmax(0, 1fr) auto; gap: 6px; }
+  .q-row .q-id { font-size: 12px; }
+  .q-row .q-time { display: none; }
+}

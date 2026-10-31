@@ -35,13 +35,24 @@ export async function pollJob() {
   if (status.job && status.job.running) jobTimer = setTimeout(pollJob, 1500);
 }
 
+// 加入下载队列（下载进行中也可以追加），返回新加入的数量
 export async function startDownload(items) {
-  setJob(await api('/api/download', { method: 'POST', body: JSON.stringify({ items }) }));
+  const job = await api('/api/download', { method: 'POST', body: JSON.stringify({ items }) });
+  setJob(job);
   pollJob();
+  return job.added;
 }
 
 export async function stopDownload() {
   setJob(await api('/api/download/stop', { method: 'POST' }));
+}
+
+// 队列操作：start / retry / remove / clear，返回接口结果
+export async function queueAction(action, body = {}) {
+  const job = await api(`/api/download/${action}`, { method: 'POST', body: JSON.stringify(body) });
+  setJob(job);
+  if (job.running) pollJob();
+  return job;
 }
 
 export function jobStatusMap() {

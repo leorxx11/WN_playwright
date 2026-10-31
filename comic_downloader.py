@@ -868,12 +868,12 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
         return False
 
 # 为了兼容性，保留原有函数名
-async def download_comic(page: Page, comic_id: int, download_dir: str = None) -> bool:
+async def download_comic(page: Page, comic_id: int, download_dir: str = None, title: str = "") -> bool:
     """下载整个漫画 - 带重试机制，成功后写入下载记录"""
     success = await download_comic_with_retry(page, comic_id, download_dir)
     if success:
         try:
-            record_download(comic_id)
+            record_download(comic_id, title)
         except OSError as e:
             get_logger().warning(f"写入下载记录失败: {e}")
     return success

@@ -102,3 +102,5 @@ cookie.json
 cookie_backups/
 download_history.json
 download_history.json.tmp
+download_queue.json
+download_queue.json.tmp

@@ -28,8 +28,8 @@ SEARCH_DATA = {
 
 
 @pytest.fixture
-def worker(monkeypatch):
-    fresh = browser_worker.BrowserWorker()
+def worker(monkeypatch, tmp_path):
+    fresh = browser_worker.BrowserWorker(queue_path=str(tmp_path / "queue.json"))
     monkeypatch.setattr(routes_download, "worker", fresh)
     monkeypatch.setattr(routes_account, "worker", fresh)
     monkeypatch.setattr(browser_worker, "setup_logging", lambda: (browser_worker.logger, ""))
@@ -117,31 +117,34 @@ def test_export_requires_selection(client):
     assert client.post(f"/api/files/{NAME}/export", json={"ids": []}).status_code == 400
 
 
-# ---------- 下载 ----------
+# ---------- 下载（基本流程，队列细节见 test_download_queue.py） ----------
 
-def test_download_job_reports_statuses(client, monkeypatch):
+def test_download_reports_statuses(client, monkeypatch):
     calls = {}
 
-    async def fake_download(comics, logger, on_status=None, should_stop=None, skip_downloaded=True):
-        calls["ids"] = [c["id"] for c in comics]
+    async def fake_download(comics, logger, on_status=None, should_stop=None, skip_downloaded=True, has_more=None):
         calls["skip_downloaded"] = skip_downloaded
-        on_status(comics[0]["id"], "done")
-        on_status(comics[1]["id"], "failed")
+        calls["ids"] = []
+        for comic in comics:
+            calls["ids"].append(comic["id"])
+            on_status(comic["id"], "done" if comic["id"] == 2 else "failed")
 
     monkeypatch.setattr(browser_worker, "download_comic_list", fake_download)
 
     items = [{"id": 2, "title": "b"}, {"id": 1, "title": "a"}, {"id": 2, "title": "b"}]
-    assert client.post("/api/download", json={"items": items}).status_code == 200
+    assert client.post("/api/download", json={"items": items}).json()["added"] == 2
     assert wait_until(lambda: not client.get("/api/download").json()["running"])
 
     status = client.get("/api/download").json()
     assert calls == {"ids": [2, 1], "skip_downloaded": False}   # 去重并保持顺序
     assert {i["id"]: i["status"] for i in status["items"]} == {2: "done", 1: "failed"}
-    assert status["message"] == "下载完成：成功 1，失败 1"
+    assert status["message"] == "队列已完成，失败 1 部"
 
 
-def test_download_requires_items(client):
-    assert client.post("/api/download", json={"items": []}).status_code == 400
+def test_download_with_no_items_does_nothing(client):
+    data = client.post("/api/download", json={"items": []}).json()
+    assert data["added"] == 0
+    assert data["running"] is False
 
 
 # ---------- 账号 ----------
@@ -204,10 +207,12 @@ def test_login_waits_for_running_download(worker, monkeypatch):
     async def scenario():
         release = asyncio.Event()
 
-        async def slow_download(comics, logger, on_status=None, should_stop=None, skip_downloaded=True):
-            order.append("download-start")
-            await release.wait()
-            order.append("download-end")
+        async def slow_download(comics, logger, on_status=None, should_stop=None, skip_downloaded=True, has_more=None):
+            for comic in comics:
+                order.append("download-start")
+                await release.wait()
+                on_status(comic["id"], "done")
+                order.append("download-end")
 
         def fake_login():
             order.append("login")
@@ -216,7 +221,8 @@ def test_login_waits_for_running_download(worker, monkeypatch):
         monkeypatch.setattr(browser_worker, "download_comic_list", slow_download)
         monkeypatch.setattr(config, "refresh_cookie", fake_login)
 
-        worker.download.start([{"id": 1, "title": "a"}])
+        worker.download.add([{"id": 1, "title": "a"}])
+        worker.download.start()
         await asyncio.sleep(0.01)
         worker.login.start()
         assert worker.login.state == "waiting"
