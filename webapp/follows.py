@@ -14,6 +14,9 @@ from webapp import common
 
 _lock = threading.Lock()
 
+# 追更状态：追更中的才参与「全部刷新」；暂停/已完结的保留结果，也可以手动刷新
+STATUSES = ("active", "paused", "finished")
+
 
 def _path() -> str:
     return os.path.join(common.BASE_DIR, "follows.json")
@@ -31,6 +34,7 @@ def new_follow(search_type: str, query: str, max_pages: int = 20, folder: str = 
         "query": query,
         "max_pages": max_pages,
         "folder": folder,
+        "status": "active",
         "created_at": _now(),
         "checked_at": checked_at,
         "items": items or [],

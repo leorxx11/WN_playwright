@@ -372,6 +372,11 @@ a.pill:hover { filter: brightness(.97); }
 /* ---------- 找漫画 ---------- */
 .find .subnav ul.src-search { padding-top: 10px; }
 .subnav .s-new { font-size: 11px; font-weight: 500; color: var(--accent); margin-left: 6px; }
+.subnav .s-status { font-size: 11px; padding: 0 5px; border-radius: 4px; margin-right: 6px; background: var(--hover); color: var(--muted); }
+.subnav li.f-finished .s-label, .subnav li.f-paused .s-label { color: var(--muted); }
+.subnav li.f-finished .s-new, .subnav li.f-paused .s-new { color: var(--muted); }
+.link-btn { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+.link-btn:hover { text-decoration: underline; background: none; }
 .f-title { font-weight: 600; font-size: 15px; margin-right: 4px; }
 .f-folder-wrap .f-folder { width: 150px; padding: 4px 8px; }
 .author-link { color: var(--accent); cursor: pointer; }

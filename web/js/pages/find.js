@@ -5,6 +5,10 @@ import { createComicList } from '../comic-list.js';
 import { followJob, progressText } from '../fetch-job.js';
 
 const TYPE_NAME = { keyword: '关键词', tag: '标签' };
+// 追更状态：只有追更中的参与「全部刷新」
+const STATUS_NAME = { active: '追更中', paused: '暂停', finished: '已完结' };
+const STATUS_ORDER = Object.keys(STATUS_NAME);
+const sortFollows = (list) => [...list].sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status));
 
 // 切换页面后回来保留状态；后台任务（搜索、刷新追更、读取书架）切走也会继续
 const cache = {
@@ -33,7 +37,7 @@ export function mount(page) {
     <div class="split find">
       <aside class="subnav">
         <ul class="src-search"><li data-src="search"><div class="s-label">搜索</div><div class="s-meta">关键词或标签</div></li></ul>
-        <div class="subnav-head"><h2>追更</h2><button class="refresh-follows" title="依次重新搜索全部追更">全部刷新</button></div>
+        <div class="subnav-head"><h2>追更</h2><button class="refresh-follows">全部刷新</button></div>
         <ul class="src-follows"></ul>
         <div class="subnav-head"><h2>书架</h2><button class="refresh-shelves" title="重新读取书架列表">刷新</button></div>
         <ul class="src-shelves"></ul>
@@ -98,14 +102,18 @@ export function mount(page) {
       followsEl.innerHTML = cache.follows.map((f) => {
         const refreshing = cache.followJobs.has(f.id);
         const fresh = f.undownloaded ? `<span class="s-new">${f.undownloaded} 部未下载</span>` : '';
+        const state = f.status === 'active' ? '' : `<span class="s-status">${STATUS_NAME[f.status]}</span>`;
+        const classes = [isCurrent('follow', f.id) ? 'active' : '', `f-${f.status}`].join(' ');
         return `
-          <li data-follow="${f.id}" class="${isCurrent('follow', f.id) ? 'active' : ''}">
+          <li data-follow="${f.id}" class="${classes}">
             <div class="s-label">${escapeHtml(f.query)}${fresh}</div>
-            <div class="s-meta">${TYPE_NAME[f.type]} · ${f.total} 部 · ${refreshing ? '刷新中…' : shortTime(f.checked_at)}</div>
+            <div class="s-meta">${state}${TYPE_NAME[f.type]} · ${f.total} 部 · ${refreshing ? '刷新中…' : shortTime(f.checked_at)}</div>
           </li>`;
       }).join('') || '<li class="s-empty">搜索后点「追更这个搜索」，以后一键看有没有新的</li>';
     }
-    refreshAllBtn.disabled = cache.refreshingAll || !(cache.follows && cache.follows.length);
+    const activeCount = (cache.follows || []).filter((f) => f.status === 'active').length;
+    refreshAllBtn.disabled = cache.refreshingAll || !activeCount;
+    refreshAllBtn.title = `依次重新搜索 ${activeCount} 个追更中的（暂停、已完结的不刷新）`;
     if (!cache.refreshingAll) refreshAllBtn.textContent = '全部刷新';
 
     if (!cache.shelves) {
@@ -121,7 +129,7 @@ export function mount(page) {
 
   async function loadFollows() {
     try {
-      cache.follows = await api('/api/follows');
+      cache.follows = sortFollows(await api('/api/follows'));
     } catch (err) {
       followsEl.innerHTML = `<li class="s-empty">${errorHtml(err)}</li>`;
       return;
@@ -228,6 +236,9 @@ export function mount(page) {
     headEl.innerHTML = `
       <div class="pagebar">
         <span class="f-title">${escapeHtml(f.query)}</span>
+        <div class="seg f-status" role="group" aria-label="追更状态">${
+          STATUS_ORDER.map((st) => `<button data-status="${st}" aria-pressed="${st === f.status}">${STATUS_NAME[st]}</button>`).join('')
+        }</div>
         ${segHtml(f.type)}
         <label>最多 <input class="pages" type="number" min="1" max="100" value="${f.max_pages}"> 页</label>
         <button class="f-refresh primary"${refreshing ? ' disabled' : ''}>${refreshing ? '刷新中…' : '刷新'}</button>
@@ -238,7 +249,9 @@ export function mount(page) {
         <div class="pb-status"></div>
       </div>`;
     headRefs = { status: headEl.querySelector('.pb-status') };
-    setStatus(`上次刷新 ${shortTime(f.checked_at)} · 共 ${f.total} 部 · 未下载 ${f.undownloaded} 部`);
+    const finale = f.has_finale && f.status !== 'finished'
+      ? ' · 结果里有「完結」，<button class="link-btn f-finish">标记为已完结</button>' : '';
+    setStatus(`上次刷新 ${escapeHtml(shortTime(f.checked_at))} · 共 ${f.total} 部 · 未下载 ${f.undownloaded} 部${finale}`, { html: true });
 
     const patch = async (body) => {
       try {
@@ -250,6 +263,15 @@ export function mount(page) {
         return false;
       }
     };
+    const setFollowStatus = async (st) => {
+      if (st === f.status || !await patch({ status: st })) return;
+      cache.follows = sortFollows(cache.follows);
+      renderSources();
+      renderFollowHead();
+      toast(st === 'active' ? '已恢复追更，「全部刷新」会刷新它' : `已设为${STATUS_NAME[st]}，「全部刷新」时跳过`);
+    };
+    headEl.querySelectorAll('[data-status]').forEach((b) => b.addEventListener('click', () => setFollowStatus(b.dataset.status)));
+    headEl.querySelector('.f-finish')?.addEventListener('click', () => setFollowStatus('finished'));
     headEl.querySelectorAll('[data-type]').forEach((b) => b.addEventListener('click', async () => {
       if (b.dataset.type !== f.type && await patch({ type: b.dataset.type })) {
         renderFollowHead();
@@ -406,7 +428,7 @@ export function mount(page) {
         method: 'POST',
         body: JSON.stringify({ type: s.type, query: s.query, max_pages: s.maxPages, job_id: s.jobId }),
       });
-      cache.follows = [created, ...(cache.follows || []).filter((f) => f.id !== created.id)];
+      cache.follows = sortFollows([created, ...(cache.follows || []).filter((f) => f.id !== created.id)]);
       cache.followItems.set(created.id, s.items);
       renderSources();
       updateSearchHead();
@@ -456,7 +478,7 @@ export function mount(page) {
   }
 
   async function refreshAll() {
-    const ids = (cache.follows || []).map((f) => f.id);
+    const ids = (cache.follows || []).filter((f) => f.status === 'active').map((f) => f.id);
     cache.refreshingAll = true;
     renderSources();
     let done = 0;
@@ -467,7 +489,7 @@ export function mount(page) {
         done++;
       }
       const fresh = (cache.follows || []).reduce((n, f) => n + f.undownloaded, 0);
-      toast(`已刷新 ${done} 个追更，共 ${fresh} 部未下载`);
+      toast(`已刷新 ${done} 个追更中的，共 ${fresh} 部未下载`);
     } catch (err) {
       toast(`刷新到第 ${done + 1} 个时出错：${err.message}`);
     } finally {

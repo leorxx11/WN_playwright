@@ -117,3 +117,25 @@ def test_classify_uses_follow_folder(client, tmp_path):
         ("other", "玩轉學姊", "other", ["玩轉學姊 999話.zip"]),
     ]
     assert client.get("/api/classify/count").json() == {"count": 2}
+
+
+def test_status_orders_list_and_flags_finale(client, monkeypatch):
+    monkeypatch.setattr(routes_search, "search_by_tag", fake_search([7]))
+    job = client.post("/api/search", json={"query": "新作", "type": "tag"}).json()
+    wait_job(client, job["id"])
+    created = client.post("/api/follows", json={"query": "新作", "type": "tag", "job_id": job["id"]}).json()
+    old = next(f for f in client.get("/api/follows").json() if f["query"] == "玩轉學姊")
+
+    assert created["status"] == "active"
+    assert old["has_finale"] is True           # 结果里有「127-128話[完結]」
+    assert created["has_finale"] is False
+
+    res = client.patch(f"/api/follows/{old['id']}", json={"status": "finished"}).json()
+    assert res["status"] == "finished"
+    client.patch(f"/api/follows/{created['id']}", json={"status": "paused"})
+    assert [(f["query"], f["status"]) for f in client.get("/api/follows").json()] == [
+        ("新作", "paused"), ("玩轉學姊", "finished"),
+    ]
+    client.patch(f"/api/follows/{created['id']}", json={"status": "active"})
+    assert client.get("/api/follows").json()[0]["status"] == "active"
+    assert client.patch(f"/api/follows/{created['id']}", json={"status": "bogus"}).status_code == 422

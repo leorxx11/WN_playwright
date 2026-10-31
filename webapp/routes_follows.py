@@ -1,5 +1,6 @@
 """追更：保存的搜索，刷新后看有哪些还没下载"""
 import asyncio
+import re
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -11,6 +12,9 @@ from webapp.fetch_jobs import FetchJob, current_cookie, get_job, start_job
 from webapp.routes_search import run_search
 
 router = APIRouter(prefix="/api/follows")
+
+Status = Literal["active", "paused", "finished"]
+FINALE_RE = re.compile(r'完[結结]')   # 标题里带「完結」说明连载可能已经结束
 
 
 class FollowBody(BaseModel):
@@ -25,6 +29,7 @@ class FollowPatch(BaseModel):
     type: Optional[Literal["keyword", "tag"]] = None
     max_pages: Optional[int] = Field(default=None, ge=1, le=100)
     folder: Optional[str] = None
+    status: Optional[Status] = None
 
 
 def _summary(follow: dict, is_downloaded=None) -> dict:
@@ -40,9 +45,11 @@ def _summary(follow: dict, is_downloaded=None) -> dict:
         "query": follow['query'],
         "max_pages": follow.get('max_pages', 20),
         "folder": follow.get('folder', ''),
+        "status": follow.get('status') if follow.get('status') in follows.STATUSES else 'active',
         "checked_at": follow.get('checked_at'),
         "total": len(raw),
         "undownloaded": undownloaded,
+        "has_finale": any(FINALE_RE.search(c.get('title') or '') for c in raw),
     }
 
 
@@ -55,8 +62,10 @@ def _get_or_404(follow_id: str) -> dict:
 
 @router.get("")
 def list_follows() -> list:
+    """追更中的在前，然后是暂停、已完结"""
     is_downloaded = downloaded_checker()
-    return [_summary(f, is_downloaded) for f in follows.load_follows()]
+    summaries = [_summary(f, is_downloaded) for f in follows.load_follows()]
+    return sorted(summaries, key=lambda f: follows.STATUSES.index(f['status']))
 
 
 @router.post("")
@@ -83,7 +92,9 @@ def follow_detail(follow_id: str) -> dict:
 @router.patch("/{follow_id}")
 def patch_follow(follow_id: str, body: FollowPatch) -> dict:
     folder = body.folder.strip() if body.folder is not None else None
-    follow = follows.update_follow(follow_id, type=body.type, max_pages=body.max_pages, folder=folder)
+    follow = follows.update_follow(
+        follow_id, type=body.type, max_pages=body.max_pages, folder=folder, status=body.status,
+    )
     if follow is None:
         raise HTTPException(status_code=404, detail="追更不存在")
     return _summary(follow)
