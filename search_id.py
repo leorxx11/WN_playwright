@@ -11,7 +11,7 @@ import os
 
 # 从配置文件导入
 from config import (
-    API_DOMAIN, get_headers, REQUEST_CONFIG, SEARCH_CONFIG, 
+    API_DOMAIN, get_request_headers_with_cookie, REQUEST_CONFIG, SEARCH_CONFIG,
     DIRECTORIES
 )
 
@@ -86,7 +86,11 @@ def make_request(url, params=None, max_retries=None):
     if max_retries is None:
         max_retries = REQUEST_CONFIG['max_retries']
     
-    headers = get_headers()
+    # 部分漫画只对登录用户可见，未带cookie时搜索会返回空结果
+    try:
+        headers = get_request_headers_with_cookie()
+    except ValueError as e:
+        raise SearchError(f"获取Cookie失败: {e}")
     timeout = REQUEST_CONFIG['timeout']
     
     for attempt in range(max_retries):
