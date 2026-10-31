@@ -10,12 +10,13 @@ import glob
 import logging
 import re
 import random
-from typing import List, Dict
+from typing import Callable, Dict, List, Optional
 from datetime import datetime
 
 from playwright.async_api import async_playwright
 from comic_downloader import download_comic, login_with_cookies, DOWNLOAD_CONFIG
 from config import DIRECTORIES, get_login_config
+from download_history import downloaded_ids
 
 
 def setup_logging() -> logging.Logger:
@@ -95,6 +96,7 @@ def find_shelf_json_files() -> List[str]:
     patterns = [
         os.path.join(search_dir, "shelf_*.json"),
         os.path.join(search_dir, "search_*.json"),
+        os.path.join(search_dir, "selected_*.json"),
     ]
 
     json_files = []
@@ -185,6 +187,136 @@ def select_json_file(logger) -> str:
         return None
 
 
+class BatchDownloadError(Exception):
+    """批量下载无法开始（如登录失败）"""
+
+
+async def download_comic_list(
+    comics: List[Dict],
+    logger,
+    on_status: Optional[Callable[[int, str], None]] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+    skip_downloaded: bool = True,
+) -> BatchDownloadManager:
+    """按顺序下载漫画列表（命令行和网页共用）
+
+    on_status(comic_id, status): status 取值 downloading / done / skipped / failed
+    should_stop(): 返回True时不再开始下一部
+    skip_downloaded: 跳过下载记录中已有的漫画
+    """
+    def report(comic_id: int, status: str) -> None:
+        if on_status:
+            on_status(comic_id, status)
+
+    def stop_requested() -> bool:
+        return bool(should_stop and should_stop())
+
+    history_ids = downloaded_ids() if skip_downloaded else set()
+
+    # 初始化下载管理器
+    manager = BatchDownloadManager(logger)
+    manager.total_comics = len(comics)
+    manager.start_time = datetime.now()
+
+    print(f"🚀 开始批量下载 {len(comics)} 部漫画")
+    logger.info(f"Starting batch download of {len(comics)} comics")
+
+    async with async_playwright() as p:
+        profile_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.playwright_profile')
+        context = await p.chromium.launch_persistent_context(
+            profile_dir,
+            headless=False,
+        )
+        page = await context.new_page()
+
+        # 设置页面超时
+        page.set_default_timeout(DOWNLOAD_CONFIG["page_timeout"])
+
+        try:
+            # 首次登录
+            print("登录中...")
+            logger.info("Attempting to login...")
+            login_success = await login_with_cookies(page)
+            if not login_success:
+                raise BatchDownloadError("登录失败，无法继续批量下载")
+
+            print("✅ 登录成功")
+            logger.info("Login successful")
+
+            # 逐个下载漫画
+            for i, comic in enumerate(comics):
+                if stop_requested():
+                    print("⏹  已停止，剩余漫画未下载")
+                    logger.info("Batch download stopped by request")
+                    break
+
+                manager.current_index = i + 1
+                comic_id = comic.get('id')
+                comic_title = comic.get('title', f'Comic_{comic_id}')
+
+                # 打印进度
+                manager.print_progress(comic_title, comic_id)
+                report(comic_id, 'downloading')
+
+                try:
+                    if comic_id in history_ids:
+                        print(f"⚠️  跳过已下载")
+                        logger.info(f"Skipping downloaded comic in history: [{comic_id}] {comic_title}")
+                        manager.successful_downloads.append(comic)
+                        report(comic_id, 'skipped')
+                        continue
+
+                    # 检查是否已经下载过（检查压缩包文件）
+                    download_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIRECTORIES['downloads'])
+                    safe_title = comic_title.replace('/', '_').replace('\\', '_').replace(':', '_')
+                    safe_title = re.sub(r'[<>:"/\\|?*]', '_', safe_title)
+                    potential_zip = os.path.join(download_dir, f"{safe_title}.zip")
+
+                    if os.path.exists(potential_zip):
+                        print(f"⚠️  跳过已存在")
+                        logger.info(f"Skipping existing comic: [{comic_id}] {comic_title} at {potential_zip}")
+                        manager.successful_downloads.append(comic)
+                        report(comic_id, 'skipped')
+                        continue
+
+                    # 下载漫画
+                    logger.info(f"Starting download: [{comic_id}] {comic_title}")
+                    success = await download_comic(page, comic_id)
+
+                    if success:
+                        print(f"✅ 成功")
+                        logger.info(f"Download successful: [{comic_id}] {comic_title}")
+                        manager.successful_downloads.append(comic)
+                        report(comic_id, 'done')
+                    else:
+                        print(f"❌ 失败")
+                        logger.error(f"Download failed: [{comic_id}] {comic_title}")
+                        manager.failed_downloads.append(comic)
+                        report(comic_id, 'failed')
+
+                    # 在每次下载后等待一段时间，避免过于频繁的请求
+                    if i < len(comics) - 1 and not stop_requested():
+                        wait_time = random.randint(1, 5)
+                        print(f"等待{wait_time}秒...")
+                        logger.info(f"Waiting {wait_time} seconds before next download...")
+                        await asyncio.sleep(wait_time)
+
+                except Exception as e:
+                    print(f"❌ 异常")
+                    logger.error(f"Exception during download [{comic_id}] {comic_title}: {e}")
+                    manager.failed_downloads.append(comic)
+                    report(comic_id, 'failed')
+                    continue
+
+        finally:
+            await context.close()
+
+            # 打印下载总结
+            manager.print_summary()
+
+    return manager
+
+
 async def download_comics_from_json(json_file_path: str, logger, start_index: int = 0, max_downloads: int = None):
     """从JSON文件中批量下载漫画"""
     
@@ -224,92 +356,11 @@ async def download_comics_from_json(json_file_path: str, logger, start_index: in
         logger.error(msg)
         return
     
-    # 初始化下载管理器
-    manager = BatchDownloadManager(logger)
-    manager.total_comics = len(comics)
-    manager.start_time = datetime.now()
-    
-    print(f"🚀 开始批量下载 {len(comics)} 部漫画")
-    logger.info(f"Starting batch download of {len(comics)} comics")
-    
-    async with async_playwright() as p:
-        profile_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.playwright_profile')
-        context = await p.chromium.launch_persistent_context(
-            profile_dir,
-            headless=False,
-        )
-        page = await context.new_page()
-        
-        # 设置页面超时
-        page.set_default_timeout(DOWNLOAD_CONFIG["page_timeout"])
-        
-        try:
-            # 首次登录
-            print("登录中...")
-            logger.info("Attempting to login...")
-            login_success = await login_with_cookies(page)
-            if not login_success:
-                error_msg = "登录失败，无法继续批量下载"
-                print(f"❌ {error_msg}")
-                logger.error(error_msg)
-                return
-            
-            print("✅ 登录成功")
-            logger.info("Login successful")
-            
-            # 逐个下载漫画
-            for i, comic in enumerate(comics):
-                manager.current_index = i + 1
-                comic_id = comic.get('id')
-                comic_title = comic.get('title', f'Comic_{comic_id}')
-                
-                # 打印进度
-                manager.print_progress(comic_title, comic_id)
-                
-                try:
-                    # 检查是否已经下载过（检查压缩包文件）
-                    download_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), DIRECTORIES['downloads'])
-                    safe_title = comic_title.replace('/', '_').replace('\\', '_').replace(':', '_')
-                    safe_title = re.sub(r'[<>:"/\\|?*]', '_', safe_title)
-                    potential_zip = os.path.join(download_dir, f"{safe_title}.zip")
-                    
-                    if os.path.exists(potential_zip):
-                        print(f"⚠️  跳过已存在")
-                        logger.info(f"Skipping existing comic: [{comic_id}] {comic_title} at {potential_zip}")
-                        manager.successful_downloads.append(comic)
-                        continue
-                    
-                    # 下载漫画
-                    logger.info(f"Starting download: [{comic_id}] {comic_title}")
-                    success = await download_comic(page, comic_id)
-                    
-                    if success:
-                        print(f"✅ 成功")
-                        logger.info(f"Download successful: [{comic_id}] {comic_title}")
-                        manager.successful_downloads.append(comic)
-                    else:
-                        print(f"❌ 失败")
-                        logger.error(f"Download failed: [{comic_id}] {comic_title}")
-                        manager.failed_downloads.append(comic)
-                    
-                    # 在每次下载后等待一段时间，避免过于频繁的请求
-                    if i < len(comics) - 1:  # 不是最后一个
-                        wait_time = random.randint(1, 5)
-                        print(f"等待{wait_time}秒...")
-                        logger.info(f"Waiting {wait_time} seconds before next download...")
-                        await asyncio.sleep(wait_time)
-                    
-                except Exception as e:
-                    print(f"❌ 异常")
-                    logger.error(f"Exception during download [{comic_id}] {comic_title}: {e}")
-                    manager.failed_downloads.append(comic)
-                    continue
-            
-        finally:
-            await context.close()
-            
-            # 打印下载总结
-            manager.print_summary()
+    try:
+        await download_comic_list(comics, logger)
+    except BatchDownloadError as e:
+        print(f"❌ {e}")
+        logger.error(str(e))
 
 
 async def main():

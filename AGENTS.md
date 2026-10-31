@@ -5,6 +5,7 @@
 - `comic_downloader.py`, `batch_download.py`: single/bulk downloads.
 - `get_shelf_info.py`: bookshelf metadata export.
 - `search_id.py`: keyword/tag search (interactive mode supported).
+- `select_web.py` + `web/index.html`: local page (default port 8787) to pick comics from exported JSON and download them; `download_history.py` tracks downloaded IDs in `download_history.json` (do not commit).
 - `name.csv`: author list used by `classify_by_author.py`.
 - `class/`: shared helpers; `logs/`: runtime logs; `downloads/`: saved content; `search_results/`: exported results.
 - `.playwright_profile/`: persistent Playwright browser profile for download sessions; do not commit it.

@@ -100,3 +100,5 @@ dmypy.json
 
 cookie.json
 cookie_backups/
+download_history.json
+download_history.json.tmp

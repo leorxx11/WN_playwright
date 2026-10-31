@@ -9,6 +9,7 @@ import logging
 
 from playwright.async_api import async_playwright, Page, BrowserContext
 from config import API_DOMAIN, DIRECTORIES, DOWNLOAD_CONFIG, get_cookie, get_login_config
+from download_history import record_download
 
 def setup_comic_logger() -> logging.Logger:
     """设置漫画下载器的日志系统"""
@@ -868,8 +869,14 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
 
 # 为了兼容性，保留原有函数名
 async def download_comic(page: Page, comic_id: int, download_dir: str = None) -> bool:
-    """下载整个漫画 - 带重试机制"""
-    return await download_comic_with_retry(page, comic_id, download_dir)
+    """下载整个漫画 - 带重试机制，成功后写入下载记录"""
+    success = await download_comic_with_retry(page, comic_id, download_dir)
+    if success:
+        try:
+            record_download(comic_id)
+        except OSError as e:
+            get_logger().warning(f"写入下载记录失败: {e}")
+    return success
 
 async def main():
     """主函数 - 演示下载单个漫画"""
