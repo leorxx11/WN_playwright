@@ -32,8 +32,8 @@ def current_cookie() -> str:
 class FetchJob:
     def __init__(self, kind: str, meta: dict) -> None:
         self.id = uuid.uuid4().hex[:12]
-        self.kind = kind          # search / shelf
-        self.meta = meta          # 搜索词、书架ID等，保存JSON时使用
+        self.kind = kind          # search / shelf / follow:<id>
+        self.meta = meta          # 搜索词、书架ID等
         self.state = "running"    # running / done / failed / cancelled
         self.done_pages = 0
         self.total_pages = 0

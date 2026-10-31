@@ -11,6 +11,8 @@ from typing import Dict, Iterator, List, Optional
 
 import config
 from batch_download import BatchDownloadError, download_comic_list, setup_logging
+from comic_downloader import DownloadQuotaExceeded
+from download_history import download_quota
 from webapp import common
 
 logger = logging.getLogger("webapp")
@@ -32,6 +34,7 @@ class DownloadQueue:
         self.items: List[dict] = []
         self.running = False
         self.stop_requested = False
+        self.quota_blocked = False   # 站点提示额度用完而暂停
         self.message = ""
         self._task: Optional[asyncio.Task] = None
         self._logger: Optional[logging.Logger] = None
@@ -89,6 +92,8 @@ class DownloadQueue:
             "counts": counts,
             "pending": self.pending_count,
             "message": self.message,
+            "quota_blocked": self.quota_blocked,
+            "quota": download_quota(),
         }
 
     # ---------- 操作 ----------
@@ -99,14 +104,16 @@ class DownloadQueue:
         for comic in comics:
             existing = self._find(comic['id'])
             if existing and existing['status'] in ('pending', 'downloading'):
-                if comic.get('title') and not existing.get('title'):
-                    existing['title'] = comic['title']
+                for key in ('title', 'source'):
+                    if comic.get(key) and not existing.get(key):
+                        existing[key] = comic[key]
                 continue
             if existing:
                 self.items.remove(existing)
             self.items.append({
                 "id": comic['id'],
                 "title": comic.get('title') or (existing or {}).get('title', ''),
+                "source": comic.get('source') or (existing or {}).get('source', ''),
                 "status": "pending",
                 "added_at": _now(),
             })
@@ -121,6 +128,7 @@ class DownloadQueue:
             self._logger, _log_file = setup_logging()
         self.running = True
         self.stop_requested = False
+        self.quota_blocked = False
         self.message = "等待浏览器空闲（正在登录）..." if self._lock.locked() else self._downloading_message()
         self._task = asyncio.create_task(self._run())
 
@@ -198,6 +206,10 @@ class DownloadQueue:
                         skip_downloaded=False,
                         has_more=lambda: self._next_pending() is not None,
                     )
+        except DownloadQuotaExceeded as e:
+            self.quota_blocked = True
+            error = (f"站点提示下载额度已用完（{e}），队列已暂停，还有 {self.pending_count} 部等待。"
+                     "额度恢复后点「开始下载」继续")
         except BatchDownloadError as e:
             error = f"下载失败：{e}"
         except Exception as e:

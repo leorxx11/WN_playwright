@@ -1,10 +1,11 @@
-// 分类：预览 downloads 里的zip按作者归到 class/ 的哪个文件夹，可调整后执行
+// 整理：预览 downloads 里的zip归到 class/ 的哪个文件夹（追更指定的文件夹、作者），可调整后执行
 
 import { api, escapeHtml, toast } from '../util.js';
-import { onJob } from '../status.js';
+import { onJob, refreshUnsorted } from '../status.js';
 
 const OTHER = 'other';
 const KIND = {
+  follow: { label: '追更', cls: 's-follow' },
   known: { label: '已知作者', cls: 's-done' },
   new: { label: '新作者', cls: 's-downloading' },
   other: { label: 'other', cls: 's-pending' },
@@ -66,8 +67,9 @@ export function mount(page) {
     const { moves, addAuthors } = plan();
     const folders = new Set(moves.map((m) => m.folder));
     const count = (kind) => groups.filter((g) => g.kind === kind).length;
+    const follow = count('follow') ? `追更 ${count('follow')} 组，` : '';
     let text = data.total
-      ? `downloads 里有 ${data.total} 个 zip：已知作者 ${count('known')} 组，新作者 ${count('new')} 组，`
+      ? `downloads 里有 ${data.total} 个 zip：${follow}已知作者 ${count('known')} 组，新作者 ${count('new')} 组，`
         + `other ${groups.filter((g) => g.kind === OTHER).reduce((n, g) => n + g.files.length, 0)} 个。`
         + `name.csv 里有 ${data.authors_count} 个作者。`
       : 'downloads 里没有 zip 文件。';
@@ -190,6 +192,7 @@ export function mount(page) {
       busy = false;
     }
     load();
+    refreshUnsorted();
   }
 
   groupsEl.addEventListener('click', (e) => {

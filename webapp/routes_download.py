@@ -12,6 +12,7 @@ router = APIRouter(prefix="/api/download")
 class DownloadItem(BaseModel):
     id: int
     title: str = ""
+    source: str = ""   # 从哪里加入的，如「追更：玩轉學姊」
 
 
 class DownloadBody(BaseModel):
@@ -34,7 +35,7 @@ async def queue_status() -> dict:
 @router.post("")
 async def add_to_queue(body: DownloadBody) -> dict:
     """加入队列并开始下载；下载进行中也可以继续追加"""
-    added = worker.download.add([{"id": item.id, "title": item.title} for item in body.items])
+    added = worker.download.add([item.model_dump() for item in body.items])
     worker.download.start()
     return _snapshot(added=added)
 

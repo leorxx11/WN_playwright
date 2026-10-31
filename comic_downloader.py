@@ -593,6 +593,27 @@ async def handle_ssl_warning(page: Page) -> bool:
         logger.error(f"处理SSL证书警告时出错: {e}")
         return False
 
+# 站点每个IP 24小时内只能下载100个文件，页面上会有「每個IP 24小時內只能下載 100 個文件」的提示。
+# 这句话平时也可能作为说明出现，所以只在下载失败（找不到下载按钮/链接、没有开始下载）时才检查
+QUOTA_TEXT_RE = re.compile(r'只能下[載载]\s*\d+\s*[個个]')
+
+
+class DownloadQuotaExceeded(Exception):
+    """站点下载额度已用完，后面的漫画继续下载也只会失败"""
+
+
+async def check_download_quota(page: Page) -> None:
+    """页面上出现额度用完的提示时抛出 DownloadQuotaExceeded"""
+    try:
+        text = await page.locator('body').inner_text(timeout=5000)
+    except Exception:
+        return
+    match = QUOTA_TEXT_RE.search(text)
+    if match:
+        line = next((l.strip() for l in text.splitlines() if match.group(0) in l), match.group(0))
+        raise DownloadQuotaExceeded(line[:120])
+
+
 async def download_comic_with_retry(page: Page, comic_id: int, download_dir: str = None) -> bool:
     """带重试机制的下载整个漫画"""
     logger = get_logger()
@@ -609,6 +630,8 @@ async def download_comic_with_retry(page: Page, comic_id: int, download_dir: str
                 return True
             else:
                 logger.error(f"第{attempt + 1}次尝试失败")
+        except DownloadQuotaExceeded:
+            raise
         except Exception as e:
             logger.error(f"第{attempt + 1}次尝试出现异常: {e}")
         
@@ -675,6 +698,7 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
                 continue
         
         if not download_button:
+            await check_download_quota(page)
             logger.error("未找到下载按钮")
             return False
         
@@ -794,6 +818,7 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
                 continue
         
         if not download_link:
+            await check_download_quota(page)
             logger.error("未找到下载链接")
             return False
         
@@ -860,9 +885,13 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
                 return False
                 
         except Exception as download_error:
+            # 点了下载链接却没开始下载，可能是额度用完的提示页
+            await check_download_quota(page)
             logger.error(f"下载过程出错: {download_error}")
             return False
-            
+
+    except DownloadQuotaExceeded:
+        raise
     except Exception as e:
         logger.error(f"下载漫画失败: {e}")
         return False

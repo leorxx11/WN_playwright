@@ -1,24 +1,38 @@
-// 共用的漫画勾选列表：已导出、搜索、书架页面都用它
+// 共用的漫画勾选列表：找漫画页的搜索、追更、书架都用它
 //
-// const list = createComicList(host, { actions: [...] })
+// const list = createComicList(host, { source, onAuthor })
 //   list.setItems(comics)        替换列表并清空勾选
 //   list.updateItems(comics)     按id更新已下载等字段，保留勾选
 //   list.selectedItems()         按列表顺序返回勾选的漫画
 //   list.refreshDownloaded()     重新查询已下载标记
 //   list.clear(text)             清空列表并显示提示
 //   list.destroy()               页面卸载时调用
-// actions: [{ label: (n) => string, primary, onClick: (items) => void, whole }]
-//   默认需要有勾选才可点；whole: true 表示作用于整个列表，列表非空即可点
+// source: () => string            加入下载队列时记录来源，如「追更：玩轉學姊」
+// onAuthor: (name) => void        标题以 [作者] 开头时显示「搜作者」，点击时调用
 
 import { api, escapeHtml, normalize, storageGet, storageSet, toast } from './util.js';
-import { jobStatusMap, onJob, startDownload, status as globalStatus, stopDownload } from './status.js';
+import { jobStatusMap, onJob, quotaWarning, startDownload, status as globalStatus, stopDownload } from './status.js';
 
 const STATUS_LABEL = {
   pending: '等待', downloading: '下载中', done: '完成',
   skipped: '已存在', failed: '失败', cancelled: '未下载',
 };
 
-export function createComicList(host, { actions = [], emptyText = '没有漫画', noItemsText = '列表是空的' } = {}) {
+// 标题开头的 [作者]（可带 (C102) 这类前缀）；有多个方括号时取最后一个，如 [汉化组][作者]
+export function titleAuthor(title) {
+  let rest = title.trim().replace(/^\([^)]*\)\s*/, '');
+  let author = '';
+  let m;
+  while ((m = rest.match(/^\[([^\]]+)\]\s*/))) {
+    author = m[1].trim();
+    rest = rest.slice(m[0].length);
+  }
+  return author;
+}
+
+export function createComicList(host, {
+  emptyText = '没有漫画', noItemsText = '列表是空的', source = () => '', onAuthor = null,
+} = {}) {
   host.innerHTML = `
     <div class="cl">
       <div class="cl-toolbar">
@@ -73,7 +87,6 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
   const builtinActions = [
     { key: 'selectFailed', label: () => '勾选失败项', onClick: selectFailed, always: true },
     { key: 'stop', label: () => '停止下载', onClick: () => stopDownload().catch((e) => toast(e.message)), always: true },
-    ...actions,
     { key: 'download', label: (n) => (globalStatus.job && globalStatus.job.running ? `加入下载 (${n})` : `下载选中 (${n})`), primary: true, onClick: downloadSelected },
   ];
   $('.cl-actions').innerHTML = builtinActions
@@ -92,12 +105,15 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
     const hidden = items.filter((c) => !visibleSet.has(c.id)).length;
     const note = hidden ? `\n其中 ${hidden} 部被筛选隐藏，也会一起下载。` : '';
     const running = !!(globalStatus.job && globalStatus.job.running);
-    const question = running
+    const quota = quotaWarning(items.length);
+    const question = (running
       ? `把 ${items.length} 部加入下载队列？会排在当前任务后面。${note}`
-      : `开始下载 ${items.length} 部？下载时会打开浏览器窗口。${note}`;
+      : `开始下载 ${items.length} 部？下载时会打开浏览器窗口。${note}`)
+      + (quota ? `\n\n⚠ ${quota}` : '');
     if (!confirm(question)) return;
     try {
-      const added = await startDownload(items.map((c) => ({ id: c.id, title: c.title })));
+      const from = source();
+      const added = await startDownload(items.map((c) => ({ id: c.id, title: c.title, source: from })));
       const skipped = items.length - added;
       toast(`已加入下载队列 ${added} 部${skipped ? `（${skipped} 部已在队列中）` : ''}`);
     } catch (err) {
@@ -172,6 +188,10 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
     if (idx === state.cursor) classes.push('cursor');
     const chapter = c.chapter_start == null ? ''
       : `<span class="b-chapter">${c.chapter_start === c.chapter_end ? c.chapter_start : `${c.chapter_start}-${c.chapter_end}`} 话</span>`;
+    const author = onAuthor ? titleAuthor(c.title) : '';
+    const authorLink = author
+      ? `<span class="author-link" data-author="${escapeHtml(author)}" title="搜索这个作者的其他作品">搜作者：${escapeHtml(author)}</span>`
+      : '';
     const cover = state.showCover && c.cover
       ? `<img class="cover" loading="lazy" alt="" src="/api/cover?url=${encodeURIComponent(c.cover)}">`
       : '';
@@ -181,7 +201,7 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
         ${cover}
         <div class="main-col">
           <div class="title" title="${escapeHtml(c.title)}">${escapeHtml(c.title)}</div>
-          <div class="meta"><span>#${c.id}</span>${chapter}<span>${escapeHtml(c.info)}</span></div>
+          <div class="meta"><span>#${c.id}</span>${chapter}<span>${escapeHtml(c.info)}</span>${authorLink}</div>
         </div>
         <div class="badges">${badgesHtml(c)}</div>
       </div>`;
@@ -227,10 +247,6 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
       } else if (action.key === 'stop') {
         btn.hidden = !running;
         btn.disabled = !!(job && job.stop_requested);
-      } else if (action.key === 'download') {
-        btn.disabled = !sel;
-      } else if (action.whole) {
-        btn.disabled = !state.items.length;
       } else {
         btn.disabled = !sel;
       }
@@ -277,6 +293,13 @@ export function createComicList(host, { actions = [], emptyText = '没有漫画'
 
   listEl.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
+    const authorEl = e.target.closest('.author-link');
+    if (authorEl) {
+      // 点作者名去搜索，不切换勾选
+      e.preventDefault();
+      onAuthor(authorEl.dataset.author);
+      return;
+    }
     const row = e.target.closest('.row');
     if (!row) return;
     e.preventDefault();

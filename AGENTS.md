@@ -5,7 +5,7 @@
 - `comic_downloader.py`, `batch_download.py`: single/bulk downloads.
 - `get_shelf_info.py`: bookshelf metadata export.
 - `search_id.py`: keyword/tag search (interactive mode supported).
-- `web.py`: starts the local web UI (default port 8787). Backend in `webapp/` (FastAPI routers; `browser_worker.py` serializes downloads and logins on the shared Playwright profile); frontend in `web/` (no build step, native ES modules; `web/js/comic-list.js` is the shared selection list). `download_history.py` tracks downloaded IDs in `download_history.json` (do not commit).
+- `web.py`: starts the local web UI (default port 8787). Backend in `webapp/` (FastAPI routers; `browser_worker.py` serializes downloads and logins on the shared Playwright profile); frontend in `web/` (no build step, native ES modules; `web/js/pages/find.js` merges search / follows / shelves, `web/js/comic-list.js` is the shared selection list). `webapp/follows.py` stores saved searches in `follows.json`; `download_history.py` tracks downloaded IDs and the 24h download quota (site limit: 100 files per IP) in `download_history.json`. Do not commit `follows.json`, `download_queue.json` or `download_history.json`.
 - `name.csv`: author list used by `classify_by_author.py`.
 - `class/`: shared helpers; `logs/`: runtime logs; `downloads/`: saved content; `search_results/`: exported results.
 - `.playwright_profile/`: persistent Playwright browser profile for download sessions; do not commit it.
@@ -61,4 +61,5 @@
 - `classify_by_author.py` matches zip filenames against `name.csv`; filenames with `[author]` or `(event) [author]` prefixes classify best.
 - When filenames have multiple leading bracket blocks such as `[group][author]`, prefer the block that matches `name.csv`.
 - Files without an author prefix should be treated as unclassified and moved to `class/other` after preview confirmation.
-- The web classify page (`webapp/routes_classify.py`) reuses `plan_classification` / `move_file` from `classify_by_author.py`; it groups author-less files by series name but still defaults them to `other`, and refuses to run while a download is in progress.
+- The web 整理 page (`webapp/routes_classify.py`) reuses `plan_classification` / `move_file` from `classify_by_author.py`; follows with a folder take priority (matched by title key), author-less files are grouped by series name but still default to `other`, and it refuses to run while a download is in progress.
+- Downloads raise `DownloadQuotaExceeded` (`comic_downloader.py`) when the site's quota message appears on a failed download; the batch stops and the web queue pauses with items kept pending. Only check for the message on failure paths, since the site may show it as a notice.

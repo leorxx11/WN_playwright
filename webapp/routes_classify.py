@@ -8,7 +8,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import classify_by_author as classifier
-from webapp import common
+from download_history import title_key
+from webapp import common, follows
 from webapp.browser_worker import worker
 
 router = APIRouter(prefix="/api/classify")
@@ -32,13 +33,27 @@ class RunRequest(BaseModel):
 def _preview() -> dict:
     url_dir, class_dir, csv_path = _paths()
     known_authors = classifier.load_known_authors(csv_path) if csv_path.exists() else []
-    groups = classifier.plan_classification(url_dir, known_authors) if url_dir.is_dir() else []
+    hints = follows.folder_hints()
+    groups = classifier.plan_classification(
+        url_dir, known_authors, lambda name: hints.get(title_key(Path(name).stem)),
+    ) if url_dir.is_dir() else []
     return {
         "groups": groups,
         "total": sum(len(g["files"]) for g in groups),
         "authors_count": len(known_authors),
         "class_folders": classifier.list_class_folders(class_dir),
     }
+
+
+def count_unsorted() -> int:
+    url_dir = _paths()[0]
+    return sum(1 for f in url_dir.iterdir() if f.suffix == '.zip') if url_dir.is_dir() else 0
+
+
+@router.get("/count")
+def unsorted_count() -> dict:
+    """downloads 里待整理的zip数量，导航栏角标用"""
+    return {"count": count_unsorted()}
 
 
 @router.get("")

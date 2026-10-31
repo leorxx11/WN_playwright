@@ -104,3 +104,5 @@ download_history.json
 download_history.json.tmp
 download_queue.json
 download_queue.json.tmp
+follows.json
+follows.json.tmp

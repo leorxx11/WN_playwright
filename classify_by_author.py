@@ -12,7 +12,7 @@ import shutil
 import unicodedata
 from pathlib import Path
 from collections import defaultdict
-from typing import Optional, Dict, List, Set
+from typing import Callable, Optional, Dict, List, Set, Tuple
 from difflib import SequenceMatcher
 
 def extract_author_candidates_from_filename(filename: str) -> List[str]:
@@ -295,15 +295,20 @@ def series_key(filename: str) -> str:
     name = re.sub(r'(第\s*)?\d+(\s*[-~～]\s*\d+)?\s*[話话章回卷]?', ' ', name)
     return re.sub(r'[\s\-_~・.,，、]+', ' ', name).strip()
 
-def plan_classification(url_dir: Path, known_authors: List[str]) -> List[dict]:
+def plan_classification(url_dir: Path, known_authors: List[str],
+                        folder_hint: Optional[Callable[[str], Optional[Tuple[str, str]]]] = None) -> List[dict]:
     """
     生成分类预览（不移动文件）
 
+    Args:
+        folder_hint: 文件名 -> (分组名, 文件夹)，优先于作者匹配（网页里来自设置了文件夹的追更）
+
     Returns:
         分组列表，每组 {key, kind, label, author, folder, files:[{name, size, author}]}
-        kind: known=已知作者, new=未知作者且≥2本（建文件夹并可加入name.csv）,
+        kind: follow=指定了文件夹的追更, known=已知作者, new=未知作者且≥2本（建文件夹并可加入name.csv）,
               other=归入other（单本未知作者按作者名分组，没有作者的按作品名分组）
     """
+    hinted: Dict[Tuple[str, str], List[dict]] = defaultdict(list)
     known: Dict[str, List[dict]] = defaultdict(list)
     unknown: Dict[str, List[dict]] = defaultdict(list)
     no_author: Dict[str, List[dict]] = defaultdict(list)
@@ -311,7 +316,10 @@ def plan_classification(url_dir: Path, known_authors: List[str]) -> List[dict]:
     for filename in sorted(f for f in os.listdir(url_dir) if f.endswith('.zip')):
         author, matched_author = find_author_match_from_filename(filename, known_authors)
         entry = {"name": filename, "size": (url_dir / filename).stat().st_size, "author": author}
-        if matched_author:
+        hint = folder_hint(filename) if folder_hint else None
+        if hint:
+            hinted[hint].append(entry)
+        elif matched_author:
             known[matched_author].append(entry)
         elif author:
             unknown[author].append(entry)
@@ -319,6 +327,11 @@ def plan_classification(url_dir: Path, known_authors: List[str]) -> List[dict]:
             no_author[series_key(filename)].append(entry)
 
     groups = [
+        {"key": f"follow:{label}", "kind": "follow", "label": label, "author": None,
+         "folder": safe_folder_name(folder), "files": files}
+        for (label, folder), files in sorted(hinted.items())
+    ]
+    groups += [
         {"key": f"known:{name}", "kind": "known", "label": name, "author": name,
          "folder": safe_folder_name(name), "files": files}
         for name, files in sorted(known.items())

@@ -1,4 +1,3 @@
-import json
 import time
 
 import pytest
@@ -6,16 +5,17 @@ from fastapi.testclient import TestClient
 
 import config
 from get_shelf_info import ComicInFavorite, Shelf
-from webapp import common, routes_files, routes_search, routes_shelf
+from webapp import comic_items, common, routes_search, routes_shelf
 from webapp.app import app
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    monkeypatch.setattr(common, "BASE_DIR", str(tmp_path))
     monkeypatch.setattr(common, "SEARCH_DIR", str(tmp_path / "search_results"))
     monkeypatch.setattr(config, "load_cookie_from_file", lambda: "a=b")
-    monkeypatch.setattr(routes_files, "downloaded_ids", lambda: {2})
-    monkeypatch.setattr(routes_files, "scan_local_zip_keys", lambda: set())
+    monkeypatch.setattr(comic_items, "downloaded_ids", lambda: {2})
+    monkeypatch.setattr(comic_items, "scan_local_zip_keys", lambda: set())
     monkeypatch.setattr(routes_search, "PAGE_INTERVAL_SECONDS", 0)
     with TestClient(app) as test_client:
         yield test_client
@@ -96,26 +96,6 @@ def test_search_error_is_reported(client, monkeypatch):
     assert "timeout" in result["message"]
 
 
-def test_save_search_writes_cli_compatible_json(client, monkeypatch):
-    search, _ = fake_search_pages([[1, 2, 3]])
-    monkeypatch.setattr(routes_search, "search_by_keyword", search)
-    job = client.post("/api/search", json={"query": "玩轉學姊"}).json()
-    wait_job(client, job["id"])
-
-    res = client.post(f"/api/jobs/{job['id']}/save", json={"ids": [3, 1]}).json()
-    assert res["count"] == 2
-    assert res["name"].startswith("search_玩轉學姊_all_")
-
-    with open(f"{common.SEARCH_DIR}/{res['name']}", encoding="utf-8") as f:
-        data = json.load(f)
-    assert [c["id"] for c in data["comics"]] == [1, 3]
-    assert data["search_metadata"]["search_query"] == "玩轉學姊"
-    assert data["comics"][0]["shelf"]["name"] == "搜索结果-玩轉學姊"
-
-    # 保存后的文件可以在「已导出」里打开
-    assert client.get(f"/api/files/{res['name']}").status_code == 200
-
-
 def test_unknown_job_returns_404(client):
     assert client.get("/api/jobs/missing").status_code == 404
 
@@ -138,7 +118,7 @@ def test_list_shelves_login_required(client, monkeypatch):
     assert client.get("/api/shelves").status_code == 401
 
 
-def test_fetch_shelf_and_export(client, monkeypatch):
+def test_fetch_shelf(client, monkeypatch):
     shelf = Shelf(1725968, "12-17")
 
     async def fake_all(session, cookie, shelf_id, on_progress=None):
@@ -156,14 +136,6 @@ def test_fetch_shelf_and_export(client, monkeypatch):
     assert result["state"] == "done"
     assert (result["done_pages"], result["total_pages"]) == (2, 2)
     assert [c["info"] for c in result["items"]] == ["收藏于 2026-03-30 23:54:45", "收藏于 2026-03-30 23:53:54"]
-
-    res = client.post(f"/api/jobs/{job['id']}/save", json={"ids": None}).json()
-    assert res["count"] == 2
-    assert res["name"].startswith("shelf_12-17_")
-    with open(f"{common.SEARCH_DIR}/{res['name']}", encoding="utf-8") as f:
-        data = json.load(f)
-    assert data["shelf_metadata"]["shelf_id"] == 1725968
-    assert data["shelf_metadata"]["shelf_name"] == "12-17"
 
 
 def test_empty_shelf_with_expired_login_fails(client, monkeypatch):

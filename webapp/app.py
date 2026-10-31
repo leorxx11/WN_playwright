@@ -10,16 +10,16 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 from webapp import (
-    common, routes_account, routes_classify, routes_download, routes_files, routes_jobs, routes_search,
-    routes_shelf,
+    comic_items, common, routes_account, routes_classify, routes_download, routes_follows, routes_jobs,
+    routes_search, routes_shelf,
 )
 
 # 封面代理只放行站点图床域名（如 t4.wnimg1.ru / t4.wnimg2.cfd）
 COVER_HOST_RE = re.compile(r'(^|\.)wnimg\d*\.[a-z]+$')
 
 app = FastAPI(title="WNACG")
-app.include_router(routes_files.router)
-app.include_router(routes_files.flags_router)
+app.include_router(comic_items.router)
+app.include_router(routes_follows.router)
 app.include_router(routes_search.router)
 app.include_router(routes_shelf.router)
 app.include_router(routes_jobs.router)

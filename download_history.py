@@ -6,11 +6,15 @@ import json
 import os
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Iterable, Optional, Set
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_FILE = os.path.join(BASE_DIR, "download_history.json")
+
+# 站点限制：每个IP 24小时内最多下载100个文件
+DAILY_DOWNLOAD_LIMIT = 100
+QUOTA_WINDOW = timedelta(hours=24)
 
 # 下载目录和分类目录（classify_by_author.py 会把zip从downloads移到class）
 LOCAL_ZIP_DIRS = [
@@ -42,6 +46,32 @@ def record_download(comic_id: int, title: str = "", path: str = HISTORY_FILE) ->
     with open(tmp_path, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
     os.replace(tmp_path, path)
+
+
+def download_quota(limit: int = DAILY_DOWNLOAD_LIMIT, path: str = HISTORY_FILE,
+                   now: Optional[datetime] = None) -> dict:
+    """按下载记录估算24小时内用掉的额度（同一IP在别处的下载不计入，只是估算）"""
+    now = now or datetime.now()
+    times = []
+    for value in load_history(path).values():
+        if not isinstance(value, dict):
+            continue
+        try:
+            downloaded_at = datetime.fromisoformat(value.get('downloaded_at', ''))
+        except (TypeError, ValueError):
+            continue
+        if now - downloaded_at < QUOTA_WINDOW:
+            times.append(downloaded_at)
+    times.sort()
+    used = len(times)
+    # 额度用完时，要等最早的几次下载满24小时才会空出额度
+    next_free = times[used - limit] + QUOTA_WINDOW if used >= limit else None
+    return {
+        "used": used,
+        "limit": limit,
+        "remaining": max(0, limit - used),
+        "next_free_at": next_free.isoformat(timespec='seconds') if next_free else None,
+    }
 
 
 def downloaded_ids(path: str = HISTORY_FILE) -> Set[int]:

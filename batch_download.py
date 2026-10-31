@@ -14,7 +14,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Sized
 from datetime import datetime
 
 from playwright.async_api import async_playwright
-from comic_downloader import download_comic, login_with_cookies, DOWNLOAD_CONFIG
+from comic_downloader import DownloadQuotaExceeded, download_comic, login_with_cookies, DOWNLOAD_CONFIG
 from config import DIRECTORIES, get_login_config
 from download_history import downloaded_ids
 
@@ -205,7 +205,8 @@ async def download_comic_list(
     """按顺序下载漫画列表（命令行和网页共用）
 
     comics: 列表，或边下载边追加的生成器（网页下载队列）
-    on_status(comic_id, status): status 取值 downloading / done / skipped / failed
+    on_status(comic_id, status): status 取值 downloading / done / skipped / failed，
+        遇到站点下载额度用完时把当前这部报告为 pending 并抛出 DownloadQuotaExceeded
     should_stop(): 返回True时不再开始下一部
     skip_downloaded: 跳过下载记录中已有的漫画
     has_more(): comics为生成器时用来判断后面是否还有，决定是否等待间隔
@@ -312,6 +313,12 @@ async def download_comic_list(
                         logger.info(f"Waiting {wait_time} seconds before next download...")
                         await asyncio.sleep(wait_time)
 
+                except DownloadQuotaExceeded as e:
+                    # 额度用完后面的也会失败，当前这部不算失败，停下来等额度恢复
+                    print(f"⛔ 站点下载额度已用完：{e}")
+                    logger.error(f"Download quota exceeded at [{comic_id}] {comic_title}: {e}")
+                    report(comic_id, 'pending')
+                    raise
                 except Exception as e:
                     print(f"❌ 异常")
                     logger.error(f"Exception during download [{comic_id}] {comic_title}: {e}")
@@ -369,7 +376,7 @@ async def download_comics_from_json(json_file_path: str, logger, start_index: in
     
     try:
         await download_comic_list(comics, logger)
-    except BatchDownloadError as e:
+    except (BatchDownloadError, DownloadQuotaExceeded) as e:
         print(f"❌ {e}")
         logger.error(str(e))
 

@@ -1,7 +1,9 @@
 // 下载：队列管理、按ID/网址添加
 
 import { escapeHtml, toast } from '../util.js';
-import { onJob, queueAction, startDownload, status, stopDownload } from '../status.js';
+import {
+  onJob, onUnsorted, queueAction, quotaWarning, startDownload, status, stopDownload,
+} from '../status.js';
 
 const STATUS_LABEL = {
   pending: '等待', downloading: '下载中', done: '完成',
@@ -38,7 +40,9 @@ export function mount(page) {
             <button data-act="clear">清除已完成</button>
           </div>
         </div>
+        <div class="q-quota"></div>
         <div class="q-summary"></div>
+        <div class="q-nudge" hidden></div>
         <div class="q-list"></div>
       </div>
       <div class="card">
@@ -53,6 +57,8 @@ export function mount(page) {
 
   const $ = (sel) => page.querySelector(sel);
   const summaryEl = $('.q-summary');
+  const quotaEl = $('.q-quota');
+  const nudgeEl = $('.q-nudge');
   const queueEl = page.querySelector('.q-list');
   const textEl = $('textarea');
   const noteEl = $('.note');
@@ -77,11 +83,14 @@ export function mount(page) {
       parts.push(`共 ${items.length} 部 · 完成 ${(c.done || 0) + (c.skipped || 0)} · 失败 ${c.failed || 0} · 等待 ${job.pending || 0}`);
     }
     if (job && job.message) parts.push(job.message);
+    summaryEl.classList.toggle('bad', !!(job && job.quota_blocked));
     summaryEl.innerHTML = escapeHtml(parts.join(' — '))
       + (items.length ? `<div class="bar"><div style="width:${finished / items.length * 100}%"></div></div>` : '');
+    renderQuota(job);
+    renderNudge();
 
     if (!items.length) {
-      queueEl.innerHTML = '<div class="q-empty">队列是空的。在搜索、书架、已导出页面勾选后点「下载选中」，或在下面粘贴 ID。</div>';
+      queueEl.innerHTML = '<div class="q-empty">队列是空的。在「找漫画」里勾选后点「下载选中」，或在下面粘贴 ID。</div>';
       return;
     }
     queueEl.innerHTML = items.map((item) => {
@@ -97,10 +106,34 @@ export function mount(page) {
         <div class="q-row">
           <span class="badge s-${item.status}">${STATUS_LABEL[item.status] || item.status}</span>
           <span class="q-id">#${item.id}</span>
-          <span class="q-title${title ? '' : ' unknown'}" title="${escapeHtml(title)}">${escapeHtml(title || '标题未知')}${time}</span>
+          <span class="q-title${title ? '' : ' unknown'}" title="${escapeHtml(title)}">${escapeHtml(title || '标题未知')}${time}${
+            item.source ? `<span class="q-source">${escapeHtml(item.source)}</span>` : ''}</span>
           <span>${action}</span>
         </div>`;
     }).join('');
+  }
+
+  // 站点限制每个 IP 24 小时下载 100 个；这里按本机下载记录估算
+  function renderQuota(job) {
+    const q = job && job.quota;
+    if (!q) {
+      quotaEl.textContent = '';
+      return;
+    }
+    const level = job.quota_blocked || !q.remaining ? 'bad' : q.remaining < 20 ? 'warn' : '';
+    let free = q.next_free_at ? `，${shortTime(q.next_free_at)} 起恢复` : '';
+    // 本机记录没用完但站点说用完了：同一个 IP 上可能还有别的设备在下载
+    if (job.quota_blocked && q.remaining) free += ' · 站点已提示用完，可能同一 IP 还有别处在下载';
+    quotaEl.className = `q-quota ${level}`;
+    quotaEl.innerHTML = `<span class="meter"><span style="width:${Math.min(100, q.used / q.limit * 100)}%"></span></span>`
+      + `近 24 小时已下载 <b>${q.used}</b> / ${q.limit}（站点每个 IP 的上限）· 还能下 ${q.remaining} 部${free}`;
+  }
+
+  function renderNudge() {
+    const n = status.unsorted;
+    const running = !!(status.job && status.job.running);
+    nudgeEl.hidden = running || !n;
+    nudgeEl.innerHTML = n ? `downloads 里有 ${n} 个文件待整理 · <a href="#/classify">去整理</a>` : '';
   }
 
   async function run(action, body, done) {
@@ -112,7 +145,11 @@ export function mount(page) {
     }
   }
 
-  btn('start').addEventListener('click', () => run('start'));
+  btn('start').addEventListener('click', () => {
+    const quota = quotaWarning(0);
+    if (quota && !confirm(`${quota}\n\n仍然开始下载？`)) return;
+    run('start');
+  });
   btn('stop').addEventListener('click', () => stopDownload().catch((err) => toast(err.message)));
   btn('retry').addEventListener('click', () => run('retry', {}, (res) => toast(`已重新排队 ${res.retried} 部`)));
   btn('clear').addEventListener('click', () => run('clear', {}, (res) => toast(`已清除 ${res.cleared} 条`)));
@@ -133,8 +170,10 @@ export function mount(page) {
   btn('add').addEventListener('click', async () => {
     const ids = parseIds(textEl.value);
     if (!ids.length) return;
+    const quota = quotaWarning(ids.length);
+    if (quota && !confirm(`${quota}\n\n仍然加入队列？`)) return;
     try {
-      const added = await startDownload(ids.map((id) => ({ id, title: '' })));
+      const added = await startDownload(ids.map((id) => ({ id, title: '', source: '手动添加' })));
       const skipped = ids.length - added;
       toast(`已加入下载队列 ${added} 部${skipped ? `（${skipped} 部已在队列中）` : ''}`);
       textEl.value = '';
@@ -146,7 +185,11 @@ export function mount(page) {
   });
 
   const offJob = onJob(renderQueue);
+  const offUnsorted = onUnsorted(renderNudge);
 
   renderQueue(status.job);
-  return offJob;
+  return () => {
+    offJob();
+    offUnsorted();
+  };
 }

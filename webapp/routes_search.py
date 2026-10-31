@@ -20,7 +20,7 @@ class SearchBody(BaseModel):
     max_pages: int = Field(default=20, ge=1, le=100)
 
 
-def _run_search(job: FetchJob, query: str, search_type: str, max_pages: int, cookie: str) -> None:
+def run_search(job: FetchJob, query: str, search_type: str, max_pages: int, cookie: str) -> None:
     search_func = search_by_tag if search_type == "tag" else search_by_keyword
     page = 1
     while page <= max_pages and not job.cancelled:
@@ -43,7 +43,7 @@ async def start_search(body: SearchBody) -> dict:
     cookie = current_cookie()
 
     async def runner(job: FetchJob) -> None:
-        await asyncio.to_thread(_run_search, job, query, body.type, body.max_pages, cookie)
+        await asyncio.to_thread(run_search, job, query, body.type, body.max_pages, cookie)
 
     job = start_job("search", {"query": query, "type": body.type}, runner)
     return job.snapshot()

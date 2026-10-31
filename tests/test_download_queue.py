@@ -138,3 +138,32 @@ def test_crash_puts_current_item_back_to_pending(tmp_path, monkeypatch):
     asyncio.run(scenario())
     assert statuses(queue) == {1: "pending"}
     assert "browser has been closed" in queue.message
+
+
+def test_quota_exceeded_pauses_queue_and_keeps_items(tmp_path, monkeypatch):
+    from comic_downloader import DownloadQuotaExceeded
+
+    queue = make_queue(tmp_path)
+
+    async def fake_download(comics, logger, on_status=None, should_stop=None, skip_downloaded=True, has_more=None):
+        for comic in comics:
+            if comic["id"] == 2:
+                on_status(comic["id"], "pending")
+                raise DownloadQuotaExceeded("每個IP 24小時內只能下載 100 個文件")
+            on_status(comic["id"], "done")
+
+    monkeypatch.setattr(browser_worker, "download_comic_list", fake_download)
+
+    async def scenario():
+        queue.add([{"id": 1, "title": "a", "source": "追更：玩轉學姊"}, {"id": 2, "title": "b"}, {"id": 3, "title": "c"}])
+        queue.start()
+        await queue._task
+
+    asyncio.run(scenario())
+    assert statuses(queue) == {1: "done", 2: "pending", 3: "pending"}   # 没有标成失败
+    assert queue.quota_blocked is True
+    assert "额度" in queue.message and "还有 2 部" in queue.message
+    assert queue.items[0]["source"] == "追更：玩轉學姊"
+    snap = queue.snapshot()
+    assert snap["quota_blocked"] is True
+    assert snap["quota"]["limit"] == 100

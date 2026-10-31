@@ -1,3 +1,6 @@
+import json
+from datetime import datetime
+
 import download_history
 
 
@@ -33,3 +36,23 @@ def test_scan_local_zip_keys_walks_subdirectories(tmp_path):
     keys = download_history.scan_local_zip_keys([str(tmp_path / "downloads"), str(tmp_path / "class"), str(tmp_path / "missing")])
 
     assert keys == {download_history.title_key("Comic One"), download_history.title_key("Comic Two")}
+
+
+def test_download_quota_counts_last_24_hours(tmp_path):
+    download_quota = download_history.download_quota
+    path = tmp_path / "history.json"
+    now = datetime(2026, 11, 1, 12, 0, 0)
+    records = {
+        "1": {"title": "old", "downloaded_at": "2026-10-31T11:59:59"},   # 超过24小时
+        "2": {"title": "a", "downloaded_at": "2026-10-31T13:00:00"},
+        "3": {"title": "b", "downloaded_at": "2026-11-01T09:00:00"},
+        "4": {"title": "bad", "downloaded_at": "oops"},
+    }
+    path.write_text(json.dumps(records), encoding="utf-8")
+
+    assert download_quota(limit=3, path=str(path), now=now) == {
+        "used": 2, "limit": 3, "remaining": 1, "next_free_at": None,
+    }
+    # 额度用完时，最早那次满24小时后空出额度
+    assert download_quota(limit=2, path=str(path), now=now)["next_free_at"] == "2026-11-01T13:00:00"
+    assert download_quota(limit=2, path=str(path), now=now)["remaining"] == 0
