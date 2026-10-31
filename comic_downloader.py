@@ -6,6 +6,7 @@ import asyncio
 import os
 import re
 import logging
+from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright, Page, BrowserContext
 from config import API_DOMAIN, DIRECTORIES, DOWNLOAD_CONFIG, get_cookie, get_login_config
@@ -33,6 +34,27 @@ def setup_comic_logger() -> logging.Logger:
     
     logger = logging.getLogger('comic_downloader')
     return logger, log_file
+
+# 明确的广告域名（按域名后缀匹配）
+AD_DOMAINS = ('adnxs.com', 'googlesyndication.com', 'doubleclick.net')
+
+
+def is_ad_url(url: str) -> bool:
+    """只按域名判断是否为广告链接。
+
+    不能对整个URL做子串匹配：下载链接的文件名是哈希，
+    如 .../08c0...c2ad.zip 里就带有 "ad."，会被误判。
+    """
+    if not url:
+        return False
+    hostname = (urlparse(url if '//' in url else f'//{url}').hostname or '').lower()
+    if not hostname:
+        return False
+    labels = hostname.split('.')
+    if 'ad' in labels or 'ads' in labels or any('advertisement' in label for label in labels):
+        return True
+    return any(hostname == domain or hostname.endswith(f'.{domain}') for domain in AD_DOMAINS)
+
 
 # 全局日志器 - 可以被外部传入
 _global_logger = None
@@ -592,8 +614,9 @@ async def download_comic_with_retry(page: Page, comic_id: int, download_dir: str
         
         # 如果不是最后一次尝试，等待后重试
         if attempt < max_retries - 1:
-            logger.info(f"等待{retry_delay/1000}秒后重试...")
-            await page.wait_for_timeout(retry_delay)
+            # retry_delay 单位是秒，wait_for_timeout 需要毫秒
+            logger.info(f"等待{retry_delay}秒后重试...")
+            await page.wait_for_timeout(retry_delay * 1000)
     
     logger.error(f"{max_retries}次尝试后仍然失败")
     return False
@@ -669,16 +692,7 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
         # 使用更安全的点击方式
         try:
             # 检查是否是明显的广告链接，只有明确的广告链接才跳过
-            is_obvious_ad = button_href and (
-                'ad.' in button_href.lower() or 
-                'ads.' in button_href.lower() or
-                'advertisement' in button_href.lower() or
-                'adnxs.com' in button_href.lower() or
-                'googlesyndication.com' in button_href.lower() or
-                'doubleclick.net' in button_href.lower()
-            )
-            
-            if is_obvious_ad:
+            if button_href and is_ad_url(button_href):
                 logger.error("检测到明显的广告链接，跳过点击")
                 return False
             
@@ -718,12 +732,7 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
                 
                 # 更精确的广告页面检测
                 is_ad_page = (
-                    'ad.' in current_url.lower() or
-                    'ads.' in current_url.lower() or  
-                    'advertisement' in current_url.lower() or
-                    'adnxs.com' in current_url.lower() or
-                    'googlesyndication.com' in current_url.lower() or
-                    'doubleclick.net' in current_url.lower() or
+                    is_ad_url(current_url) or
                     # 检查页面内容是否包含明显的广告标识
                     (await page.locator('text=广告').count() > 0 and 
                      await page.locator('text=下载').count() == 0) or
@@ -795,16 +804,7 @@ async def download_comic_single_attempt(page: Page, comic_id: int, download_dir:
             logger.info(f"下载链接URL: {download_href}")
             
             # 只有明确的广告域名才被认为是广告
-            is_ad_link = download_href and (
-                'ad.' in download_href.lower() or
-                'ads.' in download_href.lower() or
-                'advertisement' in download_href.lower() or
-                'adnxs.com' in download_href.lower() or
-                'googlesyndication.com' in download_href.lower() or
-                'doubleclick.net' in download_href.lower()
-            )
-            
-            if is_ad_link:
+            if download_href and is_ad_url(download_href):
                 logger.error("下载链接指向明确的广告页面")
                 return False
         except:
